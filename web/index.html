@@ -49,10 +49,12 @@
             <button id="jog-z-plus" class="dir z-up" data-jog="Z+" type="button" aria-label="Z плюс"><svg><use href="/icons.svg#up"></use></svg><span>Z+</span></button>
             <button id="jog-z-minus" class="dir z-down" data-jog="Z-" type="button" aria-label="Z минус"><svg><use href="/icons.svg#down"></use></svg><span>Z−</span></button>
           </div>
+          <p class="jog-hint">Нажмите для шага или удерживайте для движения.</p>
           <div id="step-label" class="field-label">Шаг, мм</div>
           <div id="steps" class="segmented step-list" aria-labelledby="step-label"></div>
           <label for="feed">Подача, мм/мин</label>
           <input id="feed" type="number" min="1" max="30000" step="1" value="600">
+          <button id="jog-stop" class="secondary full" type="button" disabled hidden><svg><use href="/icons.svg#stop"></use></svg> Стоп перемещения</button>
           <button id="home" class="secondary full" type="button"><svg><use href="/icons.svg#home"></use></svg> Машинный ноль</button>
           <div id="home-help" class="home-help" hidden>
             <p id="home-hint" role="status">Поиск машинного нуля выключен в GRBL (<code>$22=0</code>).</p>
@@ -81,6 +83,10 @@
             <div class="legend"><span><i></i>Рабочий ход</span><span><i></i>Холостой ход</span><span><i></i>Инструмент</span></div>
             <span id="plot-size" class="plot-size">—</span>
           </div>
+          <div class="point-controls">
+            <button id="point-mode" class="secondary" type="button" aria-pressed="false"><svg><use href="/icons.svg#target"></use></svg> Переезд по клику</button>
+            <span id="point-status" role="status" hidden></span>
+          </div>
         </section>
         <section class="panel console">
           <div class="panel-heading"><h2><svg><use href="/icons.svg#terminal"></use></svg> Консоль</h2><button id="clear-log" class="icon-button quiet" type="button" title="Очистить консоль" aria-label="Очистить консоль"><svg><use href="/icons.svg#trash"></use></svg></button></div>
@@ -104,13 +110,18 @@
           </div>
         </section>
         <section class="panel program">
-          <div class="panel-heading"><h2>Программа</h2></div>
+          <div class="panel-heading"><h2>Программа</h2><span id="feed-factor" class="panel-meta" hidden></span></div>
           <div class="file-card"><div class="file-icon"><svg><use href="/icons.svg#file"></use></svg></div><div><strong id="program-name">—</strong><small id="program-lines">—</small></div></div>
           <div class="job-progress"><span id="job-status">Ожидание запуска</span><strong id="job-percent">0%</strong></div>
           <progress id="progress" max="100" value="0"></progress>
           <div class="line-counter"><span id="job-lines">0 / 0 команд</span><span id="job-elapsed">00:00</span></div>
           <button id="start" class="primary full" type="button"><svg><use href="/icons.svg#play"></use></svg> Запустить</button>
           <div class="job-buttons"><button id="pause" class="secondary" type="button" disabled><svg><use href="/icons.svg#pause"></use></svg><span>Пауза</span></button><button id="stop" class="secondary stop" type="button" disabled><svg><use href="/icons.svg#stop"></use></svg> Стоп</button></div>
+          <form id="override-form" class="override-form" hidden>
+            <label for="override-percent">Подача программы, %</label>
+            <div><input id="override-percent" type="number" min="10" max="200" step="1" value="100" required><button class="secondary" type="submit">Применить</button></div>
+            <small id="override-status" role="status"></small>
+          </form>
         </section>
         <section class="panel controller">
           <div class="panel-heading"><h2>Контроллер</h2></div>
@@ -166,7 +177,7 @@
         </div>
       </div>
     </div>
-    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.2</span></footer>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.3</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings">

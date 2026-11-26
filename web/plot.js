@@ -149,12 +149,23 @@ export class Plot {
       if (event.button !== 0) return;
       canvas.setPointerCapture(event.pointerId);
       this.drag = [event.clientX, event.clientY, this.panX, this.panY];
+      this.dragged = false;
     });
     canvas.addEventListener('pointermove', event => {
       if (!this.drag) return;
+      if (Math.hypot(event.clientX - this.drag[0], event.clientY - this.drag[1]) > 5) this.dragged = true;
+      if (this.onPick && !this.dragged) return;
       this.panX = this.drag[2] + event.clientX - this.drag[0];
       this.panY = this.drag[3] + event.clientY - this.drag[1];
       this.schedule();
+    });
+    canvas.addEventListener('pointerup', event => {
+      if (!this.onPick || !this.drag || this.dragged || !this.screenToXY ||
+          Math.hypot(event.clientX - this.drag[0], event.clientY - this.drag[1]) > 5) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      if (x >= 0 && y >= 0 && x <= rect.width && y <= rect.height) this.onPick(this.screenToXY(x, y));
     });
     canvas.addEventListener('lostpointercapture', () => { this.drag = null; });
     canvas.addEventListener('dblclick', () => this.fit());
@@ -191,6 +202,11 @@ export class Plot {
   setSheet(sheet) {
     this.sheet = sheet;
     this.fit();
+  }
+
+  setTarget(target) {
+    this.target = target;
+    this.schedule();
   }
 
   fit() {
@@ -246,6 +262,7 @@ export class Plot {
       ctx.lineTo(...toCanvas(b));
     };
     const origin = xy ? toCanvas([0, 0, 0]) : null;
+    this.screenToXY = xy ? (x, y) => [(x - origin[0]) / scale, (origin[1] - y) / scale] : null;
     const tick = xy ? gridInterval(12 * 42 / scale) : 0;
 
     if (sheet) {
@@ -324,6 +341,18 @@ export class Plot {
     }
     ctx.setLineDash([]);
 
+    if (xy && this.target) {
+      const [x, y] = toCanvas([...this.target, 0]);
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, tau);
+      ctx.moveTo(x - 11, y);
+      ctx.lineTo(x + 11, y);
+      ctx.moveTo(x, y - 11);
+      ctx.lineTo(x, y + 11);
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = '#70e4bd';
+      ctx.stroke();
+    }
     const marker = this.position;
     if (marker?.length >= 3) {
       const [x, y] = toCanvas(marker);

@@ -75,8 +75,11 @@ select, input:not([type=checkbox]):not([type=file]) { display: block; width: 100
 select { appearance: none; padding-right: 30px; }
 select { background-image: linear-gradient(45deg, transparent 50%, #8ba1bd 50%), linear-gradient(135deg, #8ba1bd 50%, transparent 50%); background-position: calc(100% - 14px) 16px, calc(100% - 10px) 16px; background-size: 4px 4px; background-repeat: no-repeat; }
 .connection select, .jog input { margin-bottom: 11px; }
-.jog-pad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(3, 39px); grid-template-areas: ". yup . zup" "xl origin xr ." ". ydown . zdown"; gap: 5px; margin-bottom: 14px; }
-.jog-pad .dir { display: flex; flex-direction: column; gap: 0; min-width: 0; padding: 0; color: #c0d9f8; }
+.jog-pad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(3, 39px); grid-template-areas: ". yup . zup" "xl origin xr ." ". ydown . zdown"; gap: 5px; margin-bottom: 8px; }
+.jog-hint { color: var(--muted); font-size: 11px; margin-bottom: 11px; }
+.jog-pad .dir { display: flex; flex-direction: column; gap: 0; min-width: 0; padding: 0; color: #c0d9f8; touch-action: none; user-select: none; }
+.jog-pad .dir[data-held], #point-mode[aria-pressed="true"] { background: #203b5a; border-color: #4678a9; color: #d1e8ff; }
+#jog-stop { margin-bottom: 8px; color: #ffacac; }
 .jog-pad .dir svg { width: 15px; height: 15px; }
 .jog-pad .dir span { font: 10px var(--mono); color: #a2b9d6; }
 .y-up { grid-area: yup; }.y-down { grid-area: ydown; }.x-left { grid-area: xl; }.x-right { grid-area: xr; }.z-up { grid-area: zup; }.z-down { grid-area: zdown; }
@@ -105,6 +108,10 @@ canvas:active { cursor: grabbing; }
 .plot-warning { position: absolute; left: 12px; right: 12px; bottom: 9px; padding: 5px 8px; border-radius: 4px; background: #372918; color: #f4c987; font-size: 11px; pointer-events: none; }
 .drop-target { display: grid; place-items: center; position: absolute; inset: 9px; border-radius: 8px; border: 2px dashed var(--accent); background: #13243aee; color: #b1d6ff; pointer-events: none; font-weight: 700; }
 .visual-foot { min-height: 45px; padding: 9px 13px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.point-controls { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 0 13px 10px; }
+.point-controls button { font-size: 12px; min-height: 31px; }
+#point-status { color: var(--muted); font-size: 12px; }
+#plot.point-mode { cursor: crosshair; }
 .legend { display: flex; flex-wrap: wrap; gap: 7px 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .legend i { width: 13px; height: 2px; background: #5ba8ff; }
@@ -143,6 +150,10 @@ progress::-moz-progress-bar { border-radius: 6px; background: var(--accent); }
 .job-buttons, .controller-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 7px; }
 .job-buttons button, .controller-buttons button { padding-inline: 7px; font-size: 12px; }
 .job-buttons .stop:not(:disabled) { color: #ffa1ac; border-color: #653b4d; background: #392633; }
+.override-form { margin-top: 10px; }
+.override-form > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 6px; margin: 4px 0; }
+.override-form button { font-size: 12px; padding-inline: 6px; }
+.override-form small { color: var(--muted); font-size: 11px; }
 .telemetry { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .telemetry > span { color: var(--muted); font-size: 11px; }
 .telemetry strong { display: block; margin-top: 5px; color: var(--text); font: 600 15px var(--mono); white-space: nowrap; }

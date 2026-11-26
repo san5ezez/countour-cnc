@@ -41,6 +41,8 @@ let failed = false;
 let toastTimer;
 let renderedLog = '';
 let stateSequence = 0;
+let gesture = null;
+let pointMode = false;
 
 function savePreferences() {
   try {
@@ -59,12 +61,13 @@ function notify(message, error = false) {
   toastTimer = setTimeout(() => { toast.hidden = true; }, error ? 5600 : 3300);
 }
 
-async function request(path, body) {
+async function request(path, body, keepalive = false) {
   const options = {signal: AbortSignal.timeout(5000)};
   if (body) {
     options.method = 'POST';
     options.headers = {'Content-Type': 'application/json', 'X-CNC-Panel': 'local'};
     options.body = JSON.stringify(body);
+    options.keepalive = keepalive;
   }
   const response = await fetch(path, options);
   const data = await response.json();
@@ -106,7 +109,7 @@ function updateControls() {
   const state = machine?.state;
   const active = isJobActive(job);
   const locked = busy || failed;
-  const ready = machine?.ready && !locked;
+  const ready = machine?.ready && !locked && !gesture;
   get('port').disabled = Boolean(port) || locked;
   get('baud').disabled = Boolean(port) || locked;
   get('connect').disabled = !machine || active || locked;
@@ -125,12 +128,40 @@ function updateControls() {
   get('console-input').disabled = !ready;
   get('console-send').disabled = !ready;
   get('start').disabled = !ready || !file || file.revision !== machine.revision;
-  get('pause').disabled = locked || (job?.status !== 'running' && !(job?.status === 'paused' && ['Idle', 'Hold:0'].includes(state)));
+  get('pause').disabled = locked || (job?.status !== 'running' && !(machine?.pause_ready && machine.override_target == null));
   get('pause').querySelector('span').textContent = job?.status === 'paused' ? 'Продолжить' : 'Пауза';
   get('pause').querySelector('use').setAttribute('href', '/icons.svg#' + (job?.status === 'paused' ? 'play' : 'pause'));
   get('stop').disabled = locked || !active || job.status === 'stopping';
-  for (const button of all('[data-jog]')) button.disabled = !ready;
+  for (const button of all('[data-jog]')) {
+    button.disabled = !ready && button !== gesture?.button;
+    button.toggleAttribute('data-held', button === gesture?.button);
+  }
+  const jogStop = get('jog-stop');
+  jogStop.hidden = !machine?.jog_motion && !gesture?.started;
+  jogStop.disabled = failed || jogStop.hidden;
+  get('point-mode').disabled = !pointMode && (!ready || plot.view !== 'xy' || !machine?.position);
   for (const button of all('[data-zero]')) button.disabled = !ready || coordinate !== 'position';
+  updateFeedOverride(job, locked);
+}
+
+function updateFeedOverride(job, locked) {
+  const form = get('override-form');
+  const field = get('override-percent');
+  const status = get('override-status');
+  const current = machine?.feed_override;
+  const target = machine?.override_target;
+  const factor = get('feed-factor');
+  factor.hidden = failed || current == null || current === 100;
+  if (!factor.hidden) factor.textContent = 'Подача ' + current + '%';
+  if (job?.status === 'paused' && form.hidden) field.value = current ?? 100;
+  form.hidden = job?.status !== 'paused';
+  const available = !locked && machine?.pause_ready && current != null && target == null;
+  field.disabled = !available;
+  form.querySelector('button').disabled = !available;
+  const message = target != null ? 'GRBL применяет ' + target + '%…' :
+    !machine?.pause_ready ? 'Ожидание остановки' :
+    current == null ? 'GRBL пока не сообщил процент подачи' : 'Текущая подача · ' + current + '%';
+  if (status.textContent !== message) status.textContent = message;
 }
 
 function renderLog(log) {
@@ -184,6 +215,7 @@ function render() {
   indicator.className = 'indicator ' + color;
   indicator.lastElementChild.textContent = label;
   const port = machine?.port;
+  if (pointMode && (failed || !port || isJobActive(machine?.job))) setPointMode(false);
   if (port && port !== 'simulator' && machine.baud) get('baud').value = machine.baud;
   if (port && get('port').value !== port) {
     const select = get('port');
@@ -272,6 +304,7 @@ async function action(name, data = {}) {
 }
 
 function confirmAction(title, copy, label, callback) {
+  endGesture();
   const dialog = get('confirm');
   if (dialog.open) return;
   get('confirm-title').textContent = title;
@@ -307,12 +340,14 @@ function renderSteps() {
 
 function setView(view) {
   plot.setView(view);
+  if (view !== 'xy' && pointMode) setPointMode(false);
   get('plot-mode').textContent = viewLabels[view];
   for (const button of all('[data-view]')) {
     const active = button.dataset.view === view;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', active);
   }
+  updateControls();
 }
 
 function applyPreferences() {
@@ -382,6 +417,7 @@ async function openFile(selected) {
 function bindButtons() {
   get('workspace-nav').addEventListener('click', () => window.scrollTo({top: 0, behavior: 'smooth'}));
   get('settings-open').addEventListener('click', () => {
+    endGesture();
     fillSettings(prefs);
     get('settings').showModal();
   });
@@ -411,6 +447,15 @@ function bindButtons() {
   });
   get('pause').addEventListener('click', () => action(machine?.job?.status === 'paused' ? 'resume' : 'pause'));
   get('stop').addEventListener('click', () => action('stop'));
+  get('override-form').addEventListener('submit', event => {
+    event.preventDefault();
+    action('feed-override', {percent: get('override-percent').valueAsNumber});
+  });
+  get('jog-stop').addEventListener('click', () => {
+    endGesture();
+    request('/api/action', {action: 'jog-cancel'}, true).catch(error => notify(error.message, true));
+  });
+  get('point-mode').addEventListener('click', () => setPointMode(!pointMode));
   get('home').addEventListener('click', () => {
     handleHardware('Найти машинный ноль', 'GRBL начнёт цикл поиска концевых выключателей по настройкам контроллера.', () => action('home'));
   });
@@ -441,28 +486,133 @@ function bindButtons() {
   });
 }
 
-function jog(move) {
-  if (!machine?.ready || failed || busy) return;
+function jogFeed() {
   const feed = get('feed');
   if (!feed.checkValidity() || !Number.isFinite(feed.valueAsNumber)) {
     notify('Укажите подачу от 1 до 30 000 мм/мин.', true);
     feed.focus();
     return;
   }
-  action('jog', {axis: move[0], step: currentStep * (move[1] === '+' ? 1 : -1), feed: feed.valueAsNumber});
+  return feed.valueAsNumber;
+}
+
+function setPointMode(enabled) {
+  pointMode = enabled;
+  get('plot').classList.toggle('point-mode', enabled);
+  get('point-mode').setAttribute('aria-pressed', enabled);
+  const status = get('point-status');
+  status.hidden = !enabled;
+  status.textContent = enabled ? 'Кликните точку XY. Высота Z сохранится.' : '';
+  if (!enabled) plot.setTarget(null);
+  plot.onPick = enabled ? async ([x, y]) => {
+    if (!machine?.ready || failed || busy || gesture || !machine.position) return;
+    const feed = jogFeed();
+    if (feed === undefined) return;
+    plot.setTarget([x, y]);
+    status.textContent = 'Цель · X ' + dimensions.format(x) + ' · Y ' + dimensions.format(y) + ' мм';
+    if (!await action('jog-point', {x, y, feed})) plot.setTarget(null);
+  } : null;
+  updateControls();
+}
+
+function stepJog(move, feed) {
+  action('jog', {axis: move[0], step: currentStep * (move[1] === '+' ? 1 : -1), feed});
+}
+
+function releaseJog(token) {
+  return request('/api/action', {action: 'jog-release', token}, true);
+}
+
+async function keepJog(current) {
+  if (gesture !== current) return;
+  try {
+    await request('/api/action', {action: 'jog-keep', token: current.token});
+  } catch (error) {
+    if (gesture === current) {
+      endGesture();
+      notify(error.message, true);
+    }
+    return;
+  }
+  if (gesture === current) current.timer = setTimeout(() => keepJog(current), 125);
+}
+
+function beginGesture(move, input, button) {
+  if (gesture || !machine?.ready || failed || busy) return false;
+  const feed = jogFeed();
+  if (feed === undefined) return false;
+  const current = {move, input, button, feed, token: crypto.randomUUID(), started: false};
+  gesture = current;
+  current.timer = setTimeout(async () => {
+    if (gesture !== current) return;
+    current.started = true;
+    updateControls();
+    try {
+      await request('/api/action', {
+        action: 'jog-hold', token: current.token, axis: move[0], direction: move[1] === '+' ? 1 : -1, feed,
+      });
+      if (gesture === current) keepJog(current);
+      else await releaseJog(current.token);
+    } catch (error) {
+      if (gesture === current) {
+        endGesture();
+        notify(error.message, true);
+      }
+    }
+  }, 240);
+  updateControls();
+  return true;
+}
+
+function endGesture(tap = false) {
+  const current = gesture;
+  if (!current) return;
+  gesture = null;
+  clearTimeout(current.timer);
+  if (current.started) {
+    releaseJog(current.token).catch(error => notify(error.message, true));
+  } else if (tap && machine?.ready && !busy && !failed) {
+    stepJog(current.move, current.feed);
+  }
+  updateControls();
 }
 
 function bindJog() {
-  for (const button of all('[data-jog]')) button.addEventListener('click', () => jog(button.dataset.jog));
+  for (const button of all('[data-jog]')) {
+    const move = button.dataset.jog;
+    button.addEventListener('pointerdown', event => {
+      if (event.button !== 0 || !event.isPrimary || !beginGesture(move, event.pointerId, button)) return;
+      event.preventDefault();
+      button.setPointerCapture(event.pointerId);
+    });
+    button.addEventListener('pointerup', event => {
+      if (gesture?.input === event.pointerId) endGesture(true);
+    });
+    for (const name of ['pointercancel', 'lostpointercapture']) {
+      button.addEventListener(name, event => {
+        if (gesture?.input === event.pointerId) endGesture();
+      });
+    }
+    button.addEventListener('click', event => {
+      if (event.detail !== 0 || !machine?.ready || failed || busy || gesture) return;
+      const feed = jogFeed();
+      if (feed !== undefined) stepJog(move, feed);
+    });
+  }
   const moves = {ArrowUp: 'Y+', ArrowDown: 'Y-', ArrowLeft: 'X-', ArrowRight: 'X+', PageUp: 'Z+', PageDown: 'Z-'};
   document.addEventListener('keydown', event => {
-    if (!prefs.keyboard || !get('editor-panel').hidden || event.repeat || event.altKey || event.ctrlKey || event.shiftKey || event.metaKey ||
+    if (!prefs.keyboard || !moves[event.key] || !get('editor-panel').hidden || event.altKey || event.ctrlKey || event.shiftKey || event.metaKey ||
         document.querySelector('dialog[open]') || event.target.closest('input, select, button, textarea, [contenteditable]')) return;
-    if (moves[event.key] && machine?.ready && !failed && !busy) {
-      event.preventDefault();
-      jog(moves[event.key]);
-    }
+    if (gesture?.input === event.key || (!event.repeat && beginGesture(moves[event.key], event.key))) event.preventDefault();
   });
+  document.addEventListener('keyup', event => {
+    if (gesture?.input !== event.key) return;
+    event.preventDefault();
+    endGesture(true);
+  });
+  window.addEventListener('blur', () => endGesture());
+  window.addEventListener('pagehide', () => endGesture());
+  document.addEventListener('visibilitychange', () => { if (document.hidden) endGesture(); });
 }
 
 async function enableEditor() {
@@ -478,6 +628,8 @@ async function enableEditor() {
     document.body.dataset.editorEnabled = 'true';
     get('editor-nav').hidden = false;
     const showEditor = () => {
+      endGesture();
+      if (pointMode) setPointMode(false);
       get('workspace-panel').hidden = true;
       get('editor-panel').hidden = false;
       get('workspace-nav').classList.remove('current');
