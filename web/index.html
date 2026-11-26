@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10151d">
+  <title>Контур CNC — G-code Sender</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Контур CNC">
+      <span class="brand-icon"><svg><use href="/icons.svg#logo"></use></svg></span>
+      <span>Контур <b>CNC</b><small>G-CODE SENDER</small></span>
+    </a>
+    <nav aria-label="Разделы">
+      <button id="workspace-nav" class="nav-button current" type="button"><svg><use href="/icons.svg#grid"></use></svg> Рабочее место</button>
+      <button id="editor-nav" class="nav-button" type="button" hidden><svg><use href="/icons.svg#file"></use></svg> Редактор <small>TEST</small></button>
+      <button id="settings-open" class="nav-button" type="button"><svg><use href="/icons.svg#settings"></use></svg> Настройки</button>
+    </nav>
+    <div class="header-status"><span class="protocol">GRBL 1.1</span><span id="header-status" class="indicator"><i></i><span>Подключение</span></span></div>
+  </header>
+  <main>
+    <div id="workspace-panel">
+    <div class="page-heading">
+      <div><h1>Рабочее место</h1><p>Управление станком и запуск G-кода</p></div>
+      <button id="open-file" class="primary" type="button"><svg><use href="/icons.svg#folder"></use></svg> Открыть файл</button>
+      <input id="file-picker" type="file" accept=".nc,.gcode,.ngc,.tap,.txt,.cnc,.gc" hidden>
+    </div>
+    <div id="dashboard" class="dashboard">
+      <div class="column controls">
+        <section class="panel connection">
+          <div class="panel-heading"><h2>Подключение</h2><button id="refresh-ports" class="icon-button quiet" type="button" title="Обновить порты" aria-label="Обновить порты"><svg><use href="/icons.svg#refresh"></use></svg></button></div>
+          <label for="port">Последовательный порт</label>
+          <select id="port"><option value="simulator">Симулятор</option></select>
+          <label for="baud">Скорость порта</label>
+          <select id="baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option selected>115200</option><option>230400</option><option>250000</option></select>
+          <button id="connect" class="secondary full" type="button"><svg><use href="/icons.svg#plug"></use></svg><span>Подключить</span></button>
+        </section>
+        <section class="panel jog">
+          <div class="panel-heading"><h2>Перемещение</h2><span class="panel-meta">JOG</span></div>
+          <div class="jog-pad" aria-label="Перемещение по осям">
+            <button id="jog-y-plus" class="dir y-up" data-jog="Y+" type="button" aria-label="Y плюс"><svg><use href="/icons.svg#up"></use></svg><span>Y+</span></button>
+            <button id="jog-x-minus" class="dir x-left" data-jog="X-" type="button" aria-label="X минус"><svg><use href="/icons.svg#left"></use></svg><span>X−</span></button>
+            <span class="pad-center" aria-hidden="true"><svg><use href="/icons.svg#target"></use></svg></span>
+            <button id="jog-x-plus" class="dir x-right" data-jog="X+" type="button" aria-label="X плюс"><svg><use href="/icons.svg#right"></use></svg><span>X+</span></button>
+            <button id="jog-y-minus" class="dir y-down" data-jog="Y-" type="button" aria-label="Y минус"><svg><use href="/icons.svg#down"></use></svg><span>Y−</span></button>
+            <button id="jog-z-plus" class="dir z-up" data-jog="Z+" type="button" aria-label="Z плюс"><svg><use href="/icons.svg#up"></use></svg><span>Z+</span></button>
+            <button id="jog-z-minus" class="dir z-down" data-jog="Z-" type="button" aria-label="Z минус"><svg><use href="/icons.svg#down"></use></svg><span>Z−</span></button>
+          </div>
+          <div id="step-label" class="field-label">Шаг, мм</div>
+          <div id="steps" class="segmented step-list" aria-labelledby="step-label"></div>
+          <label for="feed">Подача, мм/мин</label>
+          <input id="feed" type="number" min="1" max="30000" step="1" value="600">
+          <button id="home" class="secondary full" type="button"><svg><use href="/icons.svg#home"></use></svg> Машинный ноль</button>
+        </section>
+      </div>
+      <div class="column central">
+        <section class="panel visualization">
+          <div class="visual-head">
+            <div><h2>Траектория</h2><p id="visual-file">Предпросмотр G-кода</p></div>
+            <div id="views" class="segmented views" aria-label="Плоскость просмотра"><button type="button" data-view="iso" class="active">3D</button><button type="button" data-view="xy">XY</button><button type="button" data-view="xz">XZ</button><button type="button" data-view="yz">YZ</button></div>
+          </div>
+          <div id="plot-area" class="plot-area">
+            <canvas id="plot" aria-label="График траектории инструмента"></canvas>
+            <span id="plot-mode" class="canvas-chip">ИЗОМЕТРИЯ</span>
+            <div class="plot-tools" aria-label="Масштаб">
+              <button id="zoom-in" class="icon-button" type="button" aria-label="Приблизить" title="Приблизить"><svg><use href="/icons.svg#plus"></use></svg></button>
+              <button id="zoom-out" class="icon-button" type="button" aria-label="Отдалить" title="Отдалить"><svg><use href="/icons.svg#minus"></use></svg></button>
+              <button id="zoom-fit" class="icon-button" type="button" aria-label="Вместить траекторию" title="Вместить траекторию"><svg><use href="/icons.svg#fit"></use></svg></button>
+            </div>
+            <span id="plot-warning" class="plot-warning" hidden></span>
+            <div id="drop-target" class="drop-target" hidden>Перетащите файл G-кода сюда</div>
+          </div>
+          <div class="visual-foot">
+            <div class="legend"><span><i></i>Рабочий ход</span><span><i></i>Холостой ход</span><span><i></i>Инструмент</span></div>
+            <span id="plot-size" class="plot-size">—</span>
+          </div>
+        </section>
+        <section class="panel console">
+          <div class="panel-heading"><h2><svg><use href="/icons.svg#terminal"></use></svg> Консоль</h2><button id="clear-log" class="icon-button quiet" type="button" title="Очистить консоль" aria-label="Очистить консоль"><svg><use href="/icons.svg#trash"></use></svg></button></div>
+          <div id="console-log" class="console-log" role="log" aria-label="Сообщения контроллера"></div>
+          <form id="console-form"><span aria-hidden="true">›</span><input id="console-input" type="text" maxlength="200" placeholder="Команда GRBL, например $$" aria-label="Команда GRBL" autocomplete="off" spellcheck="false"><button id="console-send" type="submit">Отправить <svg><use href="/icons.svg#right"></use></svg></button></form>
+        </section>
+      </div>
+      <div class="column details">
+        <section class="panel coordinates">
+          <div class="panel-heading"><h2>Координаты</h2><span class="panel-meta">ММ</span></div>
+          <div id="coordinate-views" class="segmented coordinate-views" aria-label="Система координат"><button class="active" data-coordinate="position" type="button">Рабочие</button><button data-coordinate="machine" type="button">Машинные</button></div>
+          <div class="axes">
+            <div class="axis axis-x"><span>X</span><output id="position-X">—</output><button type="button" data-zero="X" title="Обнулить X" aria-label="Обнулить X">0</button></div>
+            <div class="axis axis-y"><span>Y</span><output id="position-Y">—</output><button type="button" data-zero="Y" title="Обнулить Y" aria-label="Обнулить Y">0</button></div>
+            <div class="axis axis-z"><span>Z</span><output id="position-Z">—</output></div>
+          </div>
+          <div class="coordinate-actions">
+            <button class="secondary zero-z" data-zero="Z" type="button" title="Установить рабочий ноль по оси Z">Обнулить Z</button>
+            <button class="secondary" data-zero="XYZ" type="button">Обнулить XYZ</button>
+          </div>
+        </section>
+        <section class="panel program">
+          <div class="panel-heading"><h2>Программа</h2></div>
+          <div class="file-card"><div class="file-icon"><svg><use href="/icons.svg#file"></use></svg></div><div><strong id="program-name">—</strong><small id="program-lines">—</small></div></div>
+          <div class="job-progress"><span id="job-status">Ожидание запуска</span><strong id="job-percent">0%</strong></div>
+          <progress id="progress" max="100" value="0"></progress>
+          <div class="line-counter"><span id="job-lines">0 / 0 команд</span><span id="job-elapsed">00:00</span></div>
+          <button id="start" class="primary full" type="button"><svg><use href="/icons.svg#play"></use></svg> Запустить</button>
+          <div class="job-buttons"><button id="pause" class="secondary" type="button" disabled><svg><use href="/icons.svg#pause"></use></svg><span>Пауза</span></button><button id="stop" class="secondary stop" type="button" disabled><svg><use href="/icons.svg#stop"></use></svg> Стоп</button></div>
+        </section>
+        <section class="panel controller">
+          <div class="panel-heading"><h2>Контроллер</h2></div>
+          <div class="telemetry"><span>Подача<strong id="actual-feed">0 <small>мм/мин</small></strong></span><span>Шпиндель<strong id="actual-spindle">0 <small>об/мин</small></strong></span></div>
+          <div class="controller-buttons"><button id="unlock" class="secondary" type="button" disabled title="Снять блокировку Alarm"><svg><use href="/icons.svg#lock-open"></use></svg> Разблокировать</button><button id="reset" class="icon-button" type="button" aria-label="Сброс GRBL" title="Сброс GRBL"><svg><use href="/icons.svg#refresh"></use></svg></button></div>
+        </section>
+      </div>
+    </div>
+    </div>
+    <div id="editor-panel" hidden>
+      <div class="page-heading">
+        <div><h1>Редактор G-кода</h1><p>Настройка размеров, калибровка масштаба и разметка листа</p></div>
+        <div class="editor-actions">
+          <button id="editor-open" class="secondary" type="button"><svg><use href="/icons.svg#folder"></use></svg> Открыть файл</button>
+          <button id="editor-export" class="primary" type="button">Скачать NC</button>
+          <input id="editor-picker" type="file" accept=".nc,.gcode,.ngc,.tap,.txt,.cnc,.gc" hidden>
+        </div>
+      </div>
+      <div class="editor-grid">
+        <section class="panel editor-source">
+          <div class="panel-heading"><div><h2>Программа</h2><p id="editor-filename">—</p></div><button id="editor-current" class="secondary" type="button">Из рабочего места</button></div>
+          <textarea id="editor-code" aria-label="Текст G-кода" spellcheck="false" autocomplete="off" wrap="off"></textarea>
+          <div class="editor-source-footer"><span id="editor-lines">—</span><button id="editor-load" class="secondary" type="button">Загрузить в работу</button></div>
+        </section>
+        <div class="column editor-preview">
+          <section class="panel">
+            <div class="visual-head"><div><h2>Лист и траектория</h2><p id="editor-fit-status">—</p></div><button id="editor-fit" class="icon-button" type="button" aria-label="Вместить лист и траекторию" title="Вместить лист и траекторию"><svg><use href="/icons.svg#fit"></use></svg></button></div>
+            <div class="plot-area editor-plot"><canvas id="editor-plot" aria-label="Траектория на листе сверху"></canvas></div>
+            <div class="visual-foot"><span id="editor-size" class="plot-size">—</span><span id="editor-sheet-size" class="plot-size">—</span></div>
+          </section>
+          <section class="panel editor-controls">
+            <div class="panel-heading"><h2>Размеры и лист</h2></div>
+            <form id="editor-resize">
+              <label>Ширина X, мм<input id="editor-width" type="number" min="0.001" step="any" required></label>
+              <label>Высота Y, мм<input id="editor-height" type="number" min="0.001" step="any" required></label>
+              <button class="secondary" type="submit">Изменить размер</button>
+            </form>
+            <div class="editor-sheet">
+              <label>Формат листа<select id="editor-sheet"><option value="notebook">Тетрадный · 165 × 205 мм</option><option value="a4" selected>A4 · 210 × 297 мм</option></select></label>
+              <label>Ориентация<select id="editor-orientation"><option value="portrait">Книжная</option><option value="landscape">Альбомная</option></select></label>
+            </div>
+            <details>
+              <summary>Калибровка масштаба</summary>
+              <p>Измерьте контрольный отрезок и укажите его нужную длину. Масштаб по XY изменится пропорционально.</p>
+              <form id="editor-calibrate">
+                <label>Измерено, мм<input id="editor-measured" type="number" min="0.001" step="any" required></label>
+                <label>Нужно, мм<input id="editor-target" type="number" min="0.001" step="any" required></label>
+                <button class="secondary" type="submit">Калибровать</button>
+              </form>
+            </details>
+            <p id="editor-feedback" role="status" hidden></p>
+          </section>
+        </div>
+      </div>
+    </div>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.0</span></footer>
+  </main>
+  <div id="toast" role="status" hidden></div>
+  <dialog id="settings">
+    <form id="settings-form">
+      <div class="dialog-head"><div><h2>Настройки</h2><p>Параметры сохраняются в этом браузере.</p></div><button class="icon-button quiet" data-close="settings" type="button" aria-label="Закрыть настройки"><svg><use href="/icons.svg#close"></use></svg></button></div>
+      <div class="setting-grid">
+        <label>Набор шагов, мм<input id="pref-steps" required placeholder="0.1 1 10 50"></label>
+        <label>Шаг при запуске, мм<input id="pref-step" type="number" min="0.001" max="1000" step="0.001" required></label>
+        <label>Подача при запуске, мм/мин<input id="pref-feed" type="number" min="1" max="30000" required></label>
+        <label>Точность координат<select id="pref-decimals"><option value="2">2 знака</option><option value="3">3 знака</option><option value="4">4 знака</option></select></label>
+        <label>Вид траектории<select id="pref-view"><option value="iso">3D · изометрия</option><option value="xy">XY</option><option value="xz">XZ</option><option value="yz">YZ</option></select></label>
+        <label>Скорость порта<select id="pref-baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option><option>230400</option><option>250000</option></select></label>
+      </div>
+      <div class="switches">
+        <label><input id="pref-grid" type="checkbox"> Показывать сетку</label>
+        <label><input id="pref-rapids" type="checkbox"> Показывать холостые ходы</label>
+        <label><input id="pref-keyboard" type="checkbox"> Разрешить перемещения с клавиатуры <small>Стрелки для XY, Page Up и Page Down для Z</small></label>
+      </div>
+      <p id="settings-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button id="default-settings" class="secondary" type="button">По умолчанию</button><button class="primary" type="submit">Сохранить</button></div>
+    </form>
+  </dialog>
+  <dialog id="confirm">
+    <form method="dialog">
+      <div class="dialog-head"><div><h2 id="confirm-title"></h2><p id="confirm-copy"></p></div><button class="icon-button quiet" value="cancel" aria-label="Закрыть"><svg><use href="/icons.svg#close"></use></svg></button></div>
+      <div class="dialog-actions"><button class="secondary" value="cancel" autofocus>Отмена</button><button id="confirm-yes" class="primary" value="yes">Подтвердить</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
