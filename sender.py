@@ -18,8 +18,13 @@ LINE = re.compile(r"(?:[A-Z][+-]?(?:\d+(?:\.\d*)?|\.\d+))+")
 MAX_PROGRAM_BYTES = 2_000_000
 BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400, 250000)
 OFFSET_REPORT = re.compile(r"\[(G92|TLO):([^\]]+)\]")
+MIN_RECOVERY_LIFT = .1
 JOG_CANCEL = b"\x85"
 JOG_LEASE = 0.5
+
+
+def round_up_z(value):
+    return float(Decimal(str(round(value, 9))).quantize(Decimal("0.000001"), rounding=ROUND_CEILING))
 
 
 def jog_feed(value):
@@ -576,10 +581,20 @@ class Sender:
                 raise ValueError("На этой строке файла нет команды G-кода.")
         if type(number) is not int or not 1 <= number <= len(self.program):
             raise ValueError(f"Укажите номер команды от 1 до {len(self.program)}.")
+        return {"number": number, **self.checkpoint_height(data)}
+
+    @staticmethod
+    def checkpoint_height(data):
         clearance = data.get("clearance")
         if clearance is not None and (type(clearance) not in (float, int) or not -1_000_000 <= clearance <= 1_000_000):
             raise ValueError("Укажите допустимую рабочую высоту Z.")
-        return {"number": number, "clearance": clearance}
+        if "lift" not in data:
+            return {"clearance": clearance}
+        lift = data.get("lift")
+        if clearance is not None or (lift is not None and (
+                type(lift) not in (float, int) or not MIN_RECOVERY_LIFT <= lift <= 1_000_000)):
+            raise ValueError("Введите подъём от 0,1 мм или выберите рабочую высоту Z.")
+        return {"clearance": None, "lift": lift}
 
     def checkpoint_origin(self):
         if self.recovery_origin is not None:
@@ -613,12 +628,10 @@ class Sender:
                 origin = data.get("origin")
                 if origin is not None and not coordinates(origin):
                     raise ValueError("Некорректные координаты в файле состояния.")
-                number, clearance = data.get("number"), data.get("clearance")
+                number = data.get("number")
                 if type(number) is not int or not 1 <= number <= len(rows):
                     raise ValueError("Команда из файла состояния отсутствует в программе.")
-                if clearance is not None and (type(clearance) not in (float, int) or not -1_000_000 <= clearance <= 1_000_000):
-                    raise ValueError("Некорректная высота в файле состояния.")
-                checkpoint = {"number": number, "clearance": clearance}
+                checkpoint = {"number": number, **self.checkpoint_height(data)}
             name = data.get("name")
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("Укажите имя файла.")
@@ -667,13 +680,21 @@ class Sender:
                 raise ValueError("Дождитесь рабочих координат и остановите шпиндель.")
             origin = self.checkpoint_origin()
             entry = prepare_entry(self.program, number, origin)
-            height = Decimal(str(round(max(self.position[2], entry.position[2]), 9)))
-            minimum = float(height.quantize(Decimal("0.000001"), rounding=ROUND_CEILING))
-            valid = clearance is not None and clearance >= minimum
+            from_z = self.position[2]
+            minimum = round_up_z(max(from_z, entry.position[2]))
+            minimum_lift = max(MIN_RECOVERY_LIFT, round_up_z(minimum - from_z))
+            lift_mode = "lift" in spec
+            lift = spec.get("lift")
+            if lift_mode and lift is not None:
+                clearance = round_up_z(from_z + lift)
+            if clearance is not None and abs(clearance) > 1_000_000:
+                raise ValueError("Рассчитанная высота Z выходит за допустимый диапазон.")
+            valid = clearance is not None and clearance >= minimum and (not lift_mode or lift >= minimum_lift)
             rows = resumed_rows(self.program, number, entry, feed) if valid else None
             self.recovery_plan = {"id": uuid4().hex, "stage": "checking" if valid else "needs-clearance",
                                   "number": number, "clearance": clearance, "rows": rows,
                                   "entry": entry, "origin": origin, "feed": feed, "minimum_clearance": minimum,
+                                  "lift_mode": lift_mode, "lift": lift, "from_z": from_z, "minimum_lift": minimum_lift,
                                   "offset": self.offset, "modal_ok": False, "reported_offsets": {}, "detail": ""}
             if valid:
                 self.send("$G", "recovery-check")
@@ -681,6 +702,8 @@ class Sender:
             plan = self.checked_recovery(data, "planned")
             if not coordinates(self.position) or self.position[2] > plan["clearance"] + .001 or self.spindle:
                 raise ValueError("Проверьте положение Z и состояние шпинделя перед подводом.")
+            if plan["lift_mode"] and abs(self.position[2] - plan["from_z"]) > .001:
+                raise ValueError("Текущий Z изменился. Рассчитайте подъём заново.")
             plan["stage"] = "lifting"
             plan["lift_xy"] = self.position[:2]
             if abs(self.position[2] - plan["clearance"]) <= .001:
@@ -818,6 +841,8 @@ class Sender:
                 "line": plan["entry"].line, "command": plan["entry"].command,
                 "entry": plan["entry"].position, "clearance": plan["clearance"], "detail": plan["detail"],
                 "minimum_clearance": plan["minimum_clearance"],
+                "lift_mode": plan["lift_mode"], "lift": plan["lift"], "from_z": plan["from_z"],
+                "minimum_lift": plan["minimum_lift"],
                 "reported_offsets": dict(plan["reported_offsets"]),
             }
             return {
