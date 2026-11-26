@@ -17,6 +17,7 @@ WORD = re.compile(r"([A-Z])([+-]?(?:\d+(?:\.\d*)?|\.\d+))")
 LINE = re.compile(r"(?:[A-Z][+-]?(?:\d+(?:\.\d*)?|\.\d+))+")
 MAX_PROGRAM_BYTES = 2_000_000
 BAUD_RATES = (9600, 19200, 38400, 57600, 115200, 230400, 250000)
+OFFSET_REPORT = re.compile(r"\[(G92|TLO):([^\]]+)\]")
 JOG_CANCEL = b"\x85"
 JOG_LEASE = 0.5
 
@@ -496,6 +497,37 @@ class Sender:
         self.recovery_plan["detail"] = message
         self.log_message("error", message)
 
+    def read_recovery_offset(self, line):
+        report = OFFSET_REPORT.fullmatch(line)
+        if not report:
+            return
+        key, data = report.groups()
+        try:
+            values = tuple(float(value) * self.report_scale for value in data.split(","))
+        except ValueError:
+            return
+        lengths = (3,) if key == "G92" else (1, 3)
+        if len(values) in lengths and all(math.isfinite(value) and abs(value) <= 1_000_000 for value in values):
+            self.recovery_plan["reported_offsets"][key] = values
+
+    def finish_recovery_check(self, response):
+        plan = self.recovery_plan
+        reported = plan["reported_offsets"]
+        tool = reported.get("TLO")
+        if plan["entry"].cancels_tool_offset and (tool is None or any(tool)):
+            self.recovery_failure("В файле есть G49. Для расчёта с этой командой GRBL должен подтвердить нулевое TLO.")
+            return
+        verified = response == "ok" and len(reported) == 2
+        offsets_in_use = any(any(values) for values in reported.values())
+        if not coordinates(self.offset) and (not verified or offsets_in_use):
+            self.recovery_failure("GRBL не подтвердил рабочее смещение WCO. Дождитесь отчёта координат и рассчитайте подвод заново.")
+            return
+        if plan["offset"] is not None and not close_position(self.offset, plan["offset"]):
+            self.recovery_failure("Рабочее смещение изменилось. Рассчитайте подвод заново.")
+            return
+        plan["offset"] = self.offset
+        plan["stage"] = "planned"
+
     def advance_recovery(self, now):
         if not self.recovery_moving():
             return
@@ -642,7 +674,7 @@ class Sender:
             self.recovery_plan = {"id": uuid4().hex, "stage": "checking" if valid else "needs-clearance",
                                   "number": number, "clearance": clearance, "rows": rows,
                                   "entry": entry, "origin": origin, "feed": feed, "minimum_clearance": minimum,
-                                  "offset": self.offset, "modal_ok": False, "zero_g92": False, "zero_tlo": False, "detail": ""}
+                                  "offset": self.offset, "modal_ok": False, "reported_offsets": {}, "detail": ""}
             if valid:
                 self.send("$G", "recovery-check")
         elif action == "move-recovery":
@@ -786,6 +818,7 @@ class Sender:
                 "line": plan["entry"].line, "command": plan["entry"].command,
                 "entry": plan["entry"].position, "clearance": plan["clearance"], "detail": plan["detail"],
                 "minimum_clearance": plan["minimum_clearance"],
+                "reported_offsets": dict(plan["reported_offsets"]),
             }
             return {
                 "revision": self.revision, "port": self.port, "baud": self.baud,
@@ -864,9 +897,7 @@ class Sender:
                 modes = line[4:].rstrip("]").split()
                 self.recovery_plan["modal_ok"] = "G54" in modes and "M5" in modes and "M9" in modes
             if role == "recovery-offsets":
-                offset = re.fullmatch(r"\[(G92|TLO):(-?0(?:\.0+)?(?:,-?0(?:\.0+)?){0,2})\]", line)
-                if offset and len(offset[2].split(",")) == (3 if offset[1] == "G92" else 1):
-                    self.recovery_plan["zero_" + offset[1].lower()] = True
+                self.read_recovery_offset(line)
         if line.startswith("<") and line.endswith(">"):
             self.status_report(line)
             return
@@ -874,6 +905,7 @@ class Sender:
             if self.active():
                 self.finish_job("error", "Контроллер перезапустился.")
             self.pending = None
+            self.recovery_plan = None
             self.awaiting_idle = False
             self.held_jog = None
             self.jog_motion = self.jog_cancel_after_reply = False
@@ -914,10 +946,7 @@ class Sender:
                     else:
                         self.recovery_failure("Для восстановления выберите G54, выключите шпиндель и охлаждение (M5 и M9).")
                 if role == "recovery-offsets" and self.recovery_plan:
-                    if line == "ok" and self.recovery_plan["zero_g92"] and self.recovery_plan["zero_tlo"]:
-                        self.recovery_plan["stage"] = "planned"
-                    else:
-                        self.recovery_failure("Для восстановления нужны нулевые дополнительные смещения G92 и TLO.")
+                    self.finish_recovery_check(line)
                 if role == "setup":
                     if line != "ok" or self.report_scale is None:
                         self.disconnect("GRBL не сообщил единицы координат в настройке $13.")

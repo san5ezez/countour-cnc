@@ -401,6 +401,14 @@ function renderRecovery() {
     ' · Z в начале команды ' + heightNumber.format(preview.entry[2]) + ' мм · минимум ' +
       heightNumber.format(preview.minimum_clearance) + ' мм' : '');
   if (heights.textContent !== heightDetails) heights.textContent = heightDetails;
+  const offsets = get('recovery-offsets-report');
+  const reported = preview?.reported_offsets;
+  offsets.hidden = !reported || (Object.keys(reported).length === 0 && preview?.stage !== 'planned');
+  if (!offsets.hidden) {
+    const value = key => reported[key]?.map(item => heightNumber.format(item)).join(' / ') ?? 'нет отдельного отчёта';
+    const text = 'Смещения GRBL · G92 ' + value('G92') + ' · TLO ' + value('TLO');
+    if (offsets.textContent !== text) offsets.textContent = text;
+  }
   useMinimum.hidden = preview?.stage !== 'needs-clearance';
   useMinimum.disabled = busy || failed || !machine?.ready;
   for (const id of ['recovery-kind', 'recovery-number', 'recovery-clearance']) get(id).disabled = Boolean(inProgress || busy);

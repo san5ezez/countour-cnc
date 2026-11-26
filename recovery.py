@@ -29,6 +29,7 @@ class Entry:
     absolute: bool
     feed: float | None
     motion: int
+    cancels_tool_offset: bool = False
 
 
 def prepare_entry(program, number, origin):
@@ -41,6 +42,7 @@ def prepare_entry(program, number, origin):
     feed = None
     motion = 0
     finished = False
+    cancels_tool_offset = False
     entry = None
     for index, (line, command) in enumerate(program, 1):
         words = WORD.findall(command)
@@ -63,6 +65,7 @@ def prepare_entry(program, number, origin):
             raise ValueError(f"Строка {line}: восстановление поддерживает программы для ручки с подъёмом по Z.")
         if len(g & MOTIONS) > 1 or {20, 21} <= g or {90, 91} <= g:
             raise ValueError(f"Строка {line}: противоречивые режимы.")
+        cancels_tool_offset |= 49 in g
         if index == number:
             entry = Entry(tuple(position), line, command, metric, absolute, feed, motion)
         if g & {20, 21}:
@@ -90,6 +93,7 @@ def prepare_entry(program, number, origin):
         finished = bool(m & {2, 30})
     if number > 1 and (entry.command in {"M2", "M02", "M30"}):
         raise ValueError("Выберите команду до завершения программы.")
+    entry.cancels_tool_offset = cancels_tool_offset
     return entry
 
 
