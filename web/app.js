@@ -230,6 +230,7 @@ function render() {
   plot.setPosition(failed ? null : machine?.position || null, machine?.job?.status === 'running');
   if (machine) renderLog(machine.log);
   const job = machine?.job;
+  plot.setJobProgress(file?.revision === machine?.revision ? job : null);
   const acknowledged = job?.acknowledged || 0;
   const total = job?.total || file?.lines || 0;
   const percent = total ? Math.floor(acknowledged / total * 100) : 0;
@@ -456,6 +457,14 @@ function bindButtons() {
     request('/api/action', {action: 'jog-cancel'}, true).catch(error => notify(error.message, true));
   });
   get('point-mode').addEventListener('click', () => setPointMode(!pointMode));
+  get('execution-view').addEventListener('click', event => {
+    const button = event.currentTarget;
+    const enabled = button.getAttribute('aria-pressed') !== 'true';
+    button.setAttribute('aria-pressed', enabled);
+    get('work-legend').textContent = enabled ? 'Выполнено' : 'Рабочий ход';
+    get('unwritten-legend').hidden = !enabled;
+    plot.setExecutionView(enabled);
+  });
   get('home').addEventListener('click', () => {
     handleHardware('Найти машинный ноль', 'GRBL начнёт цикл поиска концевых выключателей по настройкам контроллера.', () => action('home'));
   });

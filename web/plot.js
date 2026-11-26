@@ -47,9 +47,9 @@ function arcPoints(start, end, args, plane, clockwise, unit) {
   return [...points, end];
 }
 
-export function parsePath(source) {
+export function parsePath(source, start = [0, 0, 0]) {
   const segments = [];
-  let pos = [0, 0, 0];
+  let pos = start;
   let absolute = true;
   let unit = 1;
   let motion = 0;
@@ -59,7 +59,7 @@ export function parsePath(source) {
   let truncated = false;
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
-  for (const raw of source.split(/\r\n?|\n/)) {
+  for (const [index, raw] of source.split(/\r\n?|\n/).entries()) {
     const line = raw.split(';', 1)[0].replace(/\([^()]*\)/g, '').replace(/\s/g, '').toUpperCase();
     const pairs = Array.from(line.matchAll(word), ([, key, value]) => [key, Number(value)]);
     const args = new Map(pairs);
@@ -99,7 +99,7 @@ export function parsePath(source) {
     }
     for (const point of points) {
       if (point.some((value, index) => value !== pos[index])) {
-        segments.push({from: pos, to: point, rapid: motion === 0});
+        segments.push({from: pos, to: point, rapid: motion === 0, arc: motion === 2 || motion === 3, line: index + 1});
         for (let axis = 0; axis < 3; axis++) {
           min[axis] = Math.min(min[axis], pos[axis], point[axis]);
           max[axis] = Math.max(max[axis], pos[axis], point[axis]);
@@ -110,6 +110,31 @@ export function parsePath(source) {
   }
   if (!segments.length) return {segments, min: [0, 0, 0], max: [0, 0, 0], approximate, truncated};
   return {segments, min, max, approximate, truncated};
+}
+
+const interpolate = (from, to, fraction) => from.map((value, axis) => value + (to[axis] - value) * fraction);
+
+export function traceProgress(segments, progress, [, lastLine, x, y, z]) {
+  const first = Math.floor(progress);
+  let closest = Infinity;
+  let result = progress;
+  for (let index = first; index < segments.length; index++) {
+    const {from, to, arc, line} = segments[index];
+    if (line > lastLine) break;
+    const dx = to[0] - from[0], dy = to[1] - from[1], dz = to[2] - from[2];
+    const px = x - from[0], py = y - from[1], pz = z - from[2];
+    const lengthSquared = dx * dx + dy * dy + dz * dz;
+    const along = (px * dx + py * dy + pz * dz) / lengthSquared;
+    const fraction = Math.max(index === first ? progress - first : 0, Math.min(1, along));
+    const distance = Math.hypot(px - dx * fraction, py - dy * fraction, pz - dz * fraction);
+    const tolerance = .04 + (arc ? .008 * Math.sqrt(lengthSquared) : 0);
+    // At a crossing prefer the earlier segment when both fit the reading.
+    if (distance <= tolerance && distance + .01 < closest) {
+      closest = distance;
+      result = index + fraction;
+    }
+  }
+  return result;
 }
 
 function project(point, view) {
@@ -180,7 +205,12 @@ export class Plot {
   }
 
   set(source) {
+    this.source = source;
     this.data = parsePath(source);
+    this.tracedJob = undefined;
+    this.tracedData = null;
+    this.traceCursor = 0;
+    this.traceSample = 0;
     this.fit();
     return this.data;
   }
@@ -197,6 +227,37 @@ export class Plot {
     this.position = position;
     this.drawing = drawing;
     this.schedule();
+  }
+
+  setExecutionView(enabled) {
+    this.executionView = enabled;
+    this.schedule();
+  }
+
+  setJobProgress(job) {
+    if (this.tracedJob !== job?.id) {
+      this.tracedJob = job?.id;
+      this.tracedData = job?.start_position ? parsePath(this.source, job.start_position) : null;
+      this.traceSample = 0;
+      this.traceCursor = 0;
+      if (this.executionView) this.schedule();
+    }
+    if (!job) return;
+    const data = this.tracedData || this.data;
+    let next = this.traceCursor;
+    if (job.status === 'complete') {
+      next = data.segments.length;
+    } else {
+      for (const sample of job.trace) {
+        if (sample[0] <= this.traceSample) continue;
+        next = traceProgress(data.segments, next, sample);
+        this.traceSample = sample[0];
+      }
+    }
+    if (next !== this.traceCursor) {
+      this.traceCursor = next;
+      if (this.executionView) this.schedule();
+    }
   }
 
   setSheet(sheet) {
@@ -226,7 +287,8 @@ export class Plot {
   }
 
   draw() {
-    const {canvas, context: ctx, data, view} = this;
+    const {canvas, context: ctx, view} = this;
+    const data = this.executionView && this.tracedData ? this.tracedData : this.data;
     const width = canvas.clientWidth;
     const height = canvas.clientHeight;
     if (!width || !height) return;
@@ -330,16 +392,32 @@ export class Plot {
       ctx.beginPath();
       for (const segment of data.segments) if (segment.rapid === rapid) trace(segment.from, segment.to);
       ctx.setLineDash(rapid ? [4, 5] : []);
-      if (!rapid) {
+      if (!rapid && !this.executionView) {
         ctx.lineWidth = 5;
         ctx.strokeStyle = '#348cff32';
         ctx.stroke();
       }
       ctx.lineWidth = rapid ? 1 : 1.75;
-      ctx.strokeStyle = sheet ? (rapid ? '#808fa8' : '#347acb') : (rapid ? '#8498b4b0' : '#62adff');
+      ctx.strokeStyle = this.executionView ? (rapid ? '#758aa554' : '#5e728c') :
+        sheet ? (rapid ? '#808fa8' : '#347acb') : (rapid ? '#8498b4b0' : '#62adff');
       ctx.stroke();
     }
     ctx.setLineDash([]);
+    if (this.executionView && this.traceCursor > 0) {
+      ctx.beginPath();
+      for (let index = 0; index < this.traceCursor; index++) {
+        const {from, to, rapid} = data.segments[index];
+        if (rapid) continue;
+        const fraction = Math.min(1, this.traceCursor - index);
+        trace(from, fraction === 1 ? to : interpolate(from, to, fraction));
+      }
+      ctx.strokeStyle = '#348cff46';
+      ctx.lineWidth = 5;
+      ctx.stroke();
+      ctx.strokeStyle = '#62adff';
+      ctx.lineWidth = 1.85;
+      ctx.stroke();
+    }
 
     if (xy && this.target) {
       const [x, y] = toCanvas([...this.target, 0]);

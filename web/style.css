@@ -78,7 +78,7 @@ select { background-image: linear-gradient(45deg, transparent 50%, #8ba1bd 50%),
 .jog-pad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(3, 39px); grid-template-areas: ". yup . zup" "xl origin xr ." ". ydown . zdown"; gap: 5px; margin-bottom: 8px; }
 .jog-hint { color: var(--muted); font-size: 11px; margin-bottom: 11px; }
 .jog-pad .dir { display: flex; flex-direction: column; gap: 0; min-width: 0; padding: 0; color: #c0d9f8; touch-action: none; user-select: none; }
-.jog-pad .dir[data-held], #point-mode[aria-pressed="true"] { background: #203b5a; border-color: #4678a9; color: #d1e8ff; }
+.jog-pad .dir[data-held], #point-mode[aria-pressed="true"], #execution-view[aria-pressed="true"] { background: #203b5a; border-color: #4678a9; color: #d1e8ff; }
 #jog-stop { margin-bottom: 8px; color: #ffacac; }
 .jog-pad .dir svg { width: 15px; height: 15px; }
 .jog-pad .dir span { font: 10px var(--mono); color: #a2b9d6; }
@@ -115,6 +115,8 @@ canvas:active { cursor: grabbing; }
 .legend { display: flex; flex-wrap: wrap; gap: 7px 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .legend i { width: 13px; height: 2px; background: #5ba8ff; }
+.legend b { font-weight: inherit; }
+.legend #unwritten-legend i { background: #5e728c; }
 .legend span:nth-child(2) i { background: transparent; border-top: 1px dashed #8c9fbb; }
 .legend span:nth-child(3) i { width: 6px; height: 6px; border-radius: 50%; background: #f6ba62; }
 .plot-size { font: 10px var(--mono); color: #9cafc8; white-space: nowrap; }

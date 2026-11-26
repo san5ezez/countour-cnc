@@ -234,6 +234,8 @@ class Simulator:
 @dataclass
 class Job:
     total: int
+    id: str = ""
+    start_position: list | None = None
     acknowledged: int = 0
     line: int = 0
     status: str = "running"
@@ -282,6 +284,7 @@ class Sender:
         self.pending_deadline = 0.0
         self.awaiting_idle = False
         self.job = None
+        self.job_trace = deque(maxlen=90)
         self.revision = uuid4().hex
         self.stop_requested_at = 0.0
         self.program_name = demo_path.name
@@ -471,6 +474,7 @@ class Sender:
                 raise ValueError("Укажите имя файла.")
             self.program_name = Path(name.replace("\\", "/")).name[:180]
             self.source, self.program, self.job = source, rows, None
+            self.job_trace.clear()
             self.revision = uuid4().hex
             self.log_message("system", f"Загружен файл {self.program_name} · {len(rows)} команд.")
             return self.file_info()
@@ -491,7 +495,8 @@ class Sender:
             self.require_idle()
             if data.get("revision") != self.revision:
                 raise ValueError("Программа изменилась. Проверьте файл и запустите его снова.")
-            self.job = Job(len(self.program), started_at=time.monotonic())
+            self.job = Job(len(self.program), id=uuid4().hex, start_position=self.position, started_at=time.monotonic())
+            self.job_trace.clear()
             self.log_message("system", f"Запуск программы {self.program_name}.")
         elif action == "pause":
             if not self.job or self.job.status != "running":
@@ -607,6 +612,7 @@ class Sender:
             if self.job:
                 job = {key: value for key, value in asdict(self.job).items() if key not in {"started_at", "finished_at"}}
                 job["elapsed"] = int((self.job.finished_at or time.monotonic()) - self.job.started_at)
+                job["trace"] = list(self.job_trace) if self.job.status != "complete" else []
             return {
                 "revision": self.revision, "port": self.port, "baud": self.baud,
                 "homing_enabled": self.homing_enabled,
@@ -658,6 +664,13 @@ class Sender:
                 self.machine = [a + b for a, b in zip(self.position, self.offset)] if self.offset else None
             self.feed = speeds[0] * self.report_scale
             self.spindle = speeds[1] if len(speeds) > 1 else 0
+            if (self.active() and self.job.line and self.position is not None
+                    and state.split(":", 1)[0] in {"Run", "Hold", "Idle"}
+                    and ("MPos" in vectors or "WPos" in vectors)):
+                point = tuple(self.position)
+                last = self.job_trace[-1] if self.job_trace else None
+                if last is None or last[2:] != point:
+                    self.job_trace.append((last[0] + 1 if last else 1, self.job.line, *point))
         self.state, self.last_status = state, time.monotonic()
         if state in {"Idle", "Alarm"}:
             self.awaiting_idle = False

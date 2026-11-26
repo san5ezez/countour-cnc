@@ -80,10 +80,11 @@
             <div id="drop-target" class="drop-target" hidden>Перетащите файл G-кода сюда</div>
           </div>
           <div class="visual-foot">
-            <div class="legend"><span><i></i>Рабочий ход</span><span><i></i>Холостой ход</span><span><i></i>Инструмент</span></div>
+            <div class="legend"><span><i></i><b id="work-legend">Рабочий ход</b></span><span><i></i>Холостой ход</span><span><i></i>Инструмент</span><span id="unwritten-legend" hidden><i></i>Осталось</span></div>
             <span id="plot-size" class="plot-size">—</span>
           </div>
           <div class="point-controls">
+            <button id="execution-view" class="secondary" type="button" aria-pressed="false">Выполнено</button>
             <button id="point-mode" class="secondary" type="button" aria-pressed="false"><svg><use href="/icons.svg#target"></use></svg> Переезд по клику</button>
             <span id="point-status" role="status" hidden></span>
           </div>
@@ -177,7 +178,7 @@
         </div>
       </div>
     </div>
-    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.3</span></footer>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.4</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings">
