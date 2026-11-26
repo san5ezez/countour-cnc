@@ -56,9 +56,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path, help="path to the resulting .exe")
     parser.add_argument("--go", default="go", help="Go 1.23+ executable")
+    parser.add_argument("--test-output", type=Path, help="also build an EXE that starts in editor mode")
     args = parser.parse_args()
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    test_output = args.test_output.resolve() if args.test_output else None
+    if test_output == output:
+        parser.error("build outputs must have different paths")
+    if test_output:
+        test_output.parent.mkdir(parents=True, exist_ok=True)
     go_root = Path(subprocess.check_output([args.go, "env", "GOROOT"], text=True).strip())
     with tempfile.TemporaryDirectory(prefix="contour-build-") as temp:
         staging = Path(temp)
@@ -69,6 +75,12 @@ def main():
             [args.go, "build", "-trimpath", "-ldflags=-s -w", "-o", str(output), "launcher.go"],
             cwd=staging, env=env, check=True,
         )
+        if test_output:
+            subprocess.run(
+                [args.go, "build", "-trimpath", "-ldflags=-s -w -X main.launchMode=test",
+                 "-o", str(test_output), "launcher.go"],
+                cwd=staging, env=env, check=True,
+            )
 
 
 if __name__ == "__main__":

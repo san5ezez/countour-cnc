@@ -796,8 +796,8 @@ function bindJog() {
 }
 
 async function enableEditor() {
+  if (document.body.dataset.launchMode !== 'test') return;
   try {
-    if (!(await request('/api/features')).editor) return;
     const {createEditor} = await import('./editor.js');
     const editor = createEditor({
       getFile: async () => file || request('/api/file'),
@@ -821,7 +821,9 @@ async function enableEditor() {
     get('workspace-nav').addEventListener('click', showWorkspace);
     showEditor();
   } catch (error) {
-    notify(error.message, true);
+    const feedback = get('editor-startup-error');
+    feedback.textContent = 'Тестовый редактор не загрузился. Обновите страницу. ' + error.message;
+    feedback.hidden = false;
   }
 }
 

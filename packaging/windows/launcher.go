@@ -17,6 +17,8 @@ import (
 //go:embed payload.zip
 var payload []byte
 
+var launchMode = "standard"
+
 func unpack() (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
@@ -84,7 +86,11 @@ func run() error {
 		return fmt.Errorf("unpacking Contour CNC: %w", err)
 	}
 	app := filepath.Join(root, "app", "app.py")
-	args := append([]string{"-X", "utf8", "-B", "-u", app}, os.Args[1:]...)
+	args := []string{"-X", "utf8", "-B", "-u", app}
+	if launchMode == "test" {
+		args = append(args, "--test")
+	}
+	args = append(args, os.Args[1:]...)
 	command := exec.Command(filepath.Join(root, "python.exe"), args...)
 	command.Dir = root
 	command.Stdin, command.Stdout, command.Stderr = os.Stdin, os.Stdout, os.Stderr

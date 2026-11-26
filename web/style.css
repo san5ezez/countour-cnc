@@ -262,9 +262,13 @@ dialog::backdrop { background: #060b13bb; }
 .editor-controls .panel-heading { margin-bottom: 4px; }
 .editor-controls form, .editor-sheet { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 9px; }
 .editor-sheet { grid-template-columns: 1fr 1fr; margin-top: 12px; }
-.editor-controls form.editor-transform { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 12px; }
+.editor-transform { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; padding: 9px 13px 0; }
+.editor-transform label { margin: 0; }
+.editor-transform input { margin-top: 5px; }
 .editor-transform button { grid-column: 1 / -1; justify-self: start; }
-#editor-selection { color: var(--muted); margin: 9px 0 0; font-size: 12px; }
+#editor-selection { color: var(--muted); margin: 8px 13px 10px; font-size: 12px; }
+#editor-build { color: #9ac6fd; font: 11px var(--mono); }
+#editor-startup-error { margin-bottom: 13px; color: #ffacac; }
 .editor-controls label { margin: 0; }
 .editor-controls label :is(input, select) { margin-top: 5px; }
 .editor-controls details { border-top: 1px solid var(--subtle); margin-top: 14px; padding-top: 12px; }
@@ -289,5 +293,5 @@ dialog::backdrop { background: #060b13bb; }
   #editor-nav small { display: none; }
   .editor-controls form { grid-template-columns: 1fr 1fr; }
   .editor-controls form button { grid-column: 1 / -1; }
-  .editor-controls form.editor-transform { grid-template-columns: 1fr 1fr; }
+  .editor-transform { grid-template-columns: 1fr 1fr; }
 }

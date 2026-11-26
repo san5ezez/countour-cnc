@@ -1,6 +1,7 @@
 """Serve the machine controls on the loopback interface."""
 
 import argparse
+import errno
 import json
 import threading
 import webbrowser
@@ -11,6 +12,7 @@ from program_edit import scale_xy, transform_xy
 from sender import MAX_PROGRAM_BYTES, Sender, parse_program, serial_ports
 
 ROOT = Path(__file__).resolve().parent
+VERSION = "0.2.8"
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
@@ -51,7 +53,7 @@ class LocalHandler(BaseHTTPRequestHandler):
         if self.path == "/api/state":
             self.json_response(200, self.server.sender.snapshot())
         elif self.path == "/api/features":
-            self.json_response(200, {"editor": self.server.test_mode})
+            self.json_response(200, {"editor": self.server.test_mode, "version": VERSION})
         elif self.path == "/api/file":
             self.json_response(200, self.server.sender.file_info())
         elif self.path == "/api/ports":
@@ -59,7 +61,11 @@ class LocalHandler(BaseHTTPRequestHandler):
             self.json_response(200, {"ports": ports, "serialAvailable": available})
         elif self.path in STATIC:
             filename, content_type = STATIC[self.path]
-            self.reply(200, (ROOT / "web" / filename).read_bytes(), content_type)
+            body = (ROOT / "web" / filename).read_bytes()
+            if self.path == "/":
+                mode = b"test" if self.server.test_mode else b"standard"
+                body = body.replace(b"{{launch-mode}}", mode).replace(b"{{version}}", VERSION.encode("ascii"))
+            self.reply(200, body, content_type)
         elif self.path == "/editor.js" and self.server.test_mode:
             self.reply(200, (ROOT / "web" / "editor.js").read_bytes(), "text/javascript; charset=utf-8")
         else:
@@ -100,17 +106,28 @@ class LocalHandler(BaseHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description="Контур — локальный G-code Sender для GRBL 1.1")
-    parser.add_argument("--port", type=int, default=8765, help="порт локального интерфейса")
+    parser.add_argument("--port", type=int, help="порт панели (по умолчанию 8765, для --test 8766)")
     parser.add_argument("--no-browser", action="store_true", help="не открывать браузер автоматически")
     parser.add_argument("--test", action="store_true", help="включить экспериментальный редактор G-кода")
     args = parser.parse_args()
-    with ThreadingHTTPServer(("127.0.0.1", args.port), LocalHandler) as server:
+    port = args.port if args.port is not None else (8766 if args.test else 8765)
+    try:
+        server = ThreadingHTTPServer(("127.0.0.1", port), LocalHandler)
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE and getattr(error, "winerror", None) not in (10013, 10048):
+            raise
+        if args.test and args.port is None:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), LocalHandler)
+        else:
+            parser.exit(1, f"Порт {port} занят или недоступен. Закройте предыдущий запуск или выберите другой порт через --port.\n")
+    with server:
         sender = Sender(ROOT / "examples" / "rosette.nc")
         sender.command("connect", {"port": "simulator", "baud": 115200})
         server.sender = sender
         server.test_mode = args.test
         url = f"http://127.0.0.1:{server.server_port}"
-        print(f"Контур CNC · {url}", flush=True)
+        mode = " TEST" if args.test else ""
+        print(f"Контур CNC {VERSION}{mode} · {url}", flush=True)
         if not args.no_browser:
             threading.Timer(0.35, webbrowser.open, args=(url,)).start()
         try:
