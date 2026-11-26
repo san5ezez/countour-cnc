@@ -54,6 +54,10 @@
           <label for="feed">Подача, мм/мин</label>
           <input id="feed" type="number" min="1" max="30000" step="1" value="600">
           <button id="home" class="secondary full" type="button"><svg><use href="/icons.svg#home"></use></svg> Машинный ноль</button>
+          <div id="home-help" class="home-help" hidden>
+            <p id="home-hint" role="status">Поиск машинного нуля выключен в GRBL (<code>$22=0</code>).</p>
+            <button id="home-check" class="secondary full" type="button">Проверить $22</button>
+          </div>
         </section>
       </div>
       <div class="column central">
@@ -161,7 +165,7 @@
         </div>
       </div>
     </div>
-    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.0</span></footer>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.1</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings">

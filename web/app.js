@@ -112,7 +112,14 @@ function updateControls() {
   get('connect').disabled = !machine || active || locked;
   get('connect').querySelector('span').textContent = port ? 'Отключить' : 'Подключить';
   get('open-file').disabled = active || locked;
-  get('home').disabled = locked || active || machine?.busy || !['Idle', 'Alarm'].includes(state);
+  const homeDisabled = machine?.homing_enabled === false;
+  const controllerAvailable = !locked && !active && !machine?.busy && ['Idle', 'Alarm'].includes(state);
+  const home = get('home');
+  home.disabled = !controllerAvailable || homeDisabled;
+  if (homeDisabled && !failed) home.setAttribute('aria-describedby', 'home-hint');
+  else home.removeAttribute('aria-describedby');
+  get('home-help').hidden = !homeDisabled || failed;
+  get('home-check').disabled = !controllerAvailable;
   get('unlock').disabled = locked || active || machine?.busy || state !== 'Alarm';
   get('reset').disabled = !port || locked;
   get('console-input').disabled = !ready;
@@ -407,6 +414,7 @@ function bindButtons() {
   get('home').addEventListener('click', () => {
     handleHardware('Найти машинный ноль', 'GRBL начнёт цикл поиска концевых выключателей по настройкам контроллера.', () => action('home'));
   });
+  get('home-check').addEventListener('click', () => action('read-settings'));
   get('unlock').addEventListener('click', () => {
     handleHardware('Разблокировать', 'Убедитесь, что причина аварийного состояния устранена.', () => action('unlock'));
   });

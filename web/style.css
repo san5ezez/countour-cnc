@@ -87,6 +87,9 @@ select { background-image: linear-gradient(45deg, transparent 50%, #8ba1bd 50%),
 .step-list { margin-bottom: 12px; flex-wrap: wrap; }
 .step-list button { flex: 1; padding: 4px 3px; font-family: var(--mono); }
 .jog input { font-family: var(--mono); }
+.home-help { margin-top: 8px; }
+.home-help p { margin-bottom: 8px; color: #f2c378; font-size: 12px; line-height: 1.45; }
+.home-help button { min-height: 32px; font-size: 12px; }
 
 .visual-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-height: 66px; padding: 12px 15px; }
 .visual-head p { margin-top: 5px; color: var(--muted); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }

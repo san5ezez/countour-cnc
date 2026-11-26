@@ -82,6 +82,7 @@ class Simulator:
         self.spindle = 0.0
         self.spindle_on = False
         self.report_inches = False
+        self.homing_enabled = True
 
     def read(self, _size):
         return self.lines.popleft() if self.lines else b""
@@ -121,11 +122,18 @@ class Simulator:
 
     def execute(self, command, now):
         if command == "$$":
-            self.lines.append(f"$13={int(self.report_inches)}\n".encode())
-            self.lines.append(b"$20=0\n$21=0\n$22=0\n$110=5000.000\n$111=5000.000\n")
+            self.lines.append(
+                f"$13={int(self.report_inches)}\n$20=0\n$21=0\n$22={int(self.homing_enabled)}\n"
+                "$110=5000.000\n$111=5000.000\n".encode()
+            )
         elif command.startswith("$13="):
             self.report_inches = bool(float(command[4:]))
+        elif command.startswith("$22="):
+            self.homing_enabled = bool(float(command[4:]))
         elif command == "$H":
+            if not self.homing_enabled:
+                self.lines.append(b"error:5\n")
+                return
             self.machine = [0.0, 0.0, 0.0]
             self.state, self.finish = "Home", now + 0.45
         elif command == "$X":
@@ -187,6 +195,7 @@ class Sender:
         self.port = None
         self.baud = None
         self.report_scale = None
+        self.homing_enabled = None
         self.connected_at = 0.0
         self.state = "Offline"
         self.last_status = 0.0
@@ -228,6 +237,7 @@ class Sender:
         self.port = port
         self.baud = baud
         self.report_scale = 1 if port == "simulator" else None
+        self.homing_enabled = True if port == "simulator" else None
         self.connected_at = time.monotonic()
         self.state = "Connecting"
         self.next_poll = 0.0
@@ -246,6 +256,7 @@ class Sender:
         self.port = None
         self.baud = None
         self.report_scale = None
+        self.homing_enabled = None
         self.receive = b""
         self.pending = None
         self.awaiting_idle = self.resetting = False
@@ -364,10 +375,13 @@ class Sender:
             if not self.fresh() or self.report_scale is None or self.active() or self.pending or self.state != "Alarm":
                 raise ValueError("Разблокировка доступна при активном Alarm.")
             self.send("$X", "manual")
-        elif action == "home":
-            if self.active() or self.pending or not self.fresh() or self.report_scale is None or self.state not in {"Idle", "Alarm"}:
-                raise ValueError("Поиск машинного нуля доступен в Idle или Alarm.")
-            self.send("$H", "manual")
+        elif action in {"home", "read-settings"}:
+            if (self.active() or self.pending or self.awaiting_idle or not self.fresh()
+                    or self.report_scale is None or self.state not in {"Idle", "Alarm"}):
+                raise ValueError("Дождитесь состояния Idle или Alarm и завершения текущей команды.")
+            if action == "home" and self.homing_enabled is False:
+                raise ValueError("Поиск машинного нуля выключен в GRBL ($22=0).")
+            self.send("$H" if action == "home" else "$$", "manual")
         elif action == "zero":
             self.require_idle()
             axes = data.get("axes")
@@ -412,6 +426,7 @@ class Sender:
                 job["elapsed"] = int((self.job.finished_at or time.monotonic()) - self.job.started_at)
             return {
                 "revision": self.revision, "port": self.port, "baud": self.baud,
+                "homing_enabled": self.homing_enabled,
                 "state": self.state if self.fresh() or not self.link else "Connecting",
                 "ready": self.idle() and not self.active(),
                 "busy": bool(self.pending or self.awaiting_idle or self.resetting or (self.link and self.report_scale is None)),
@@ -471,6 +486,8 @@ class Sender:
             self.last_status = 0.0
             self.connected_at = time.monotonic()
             self.report_scale = self.report_scale if self.port == "simulator" else None
+            if self.port != "simulator":
+                self.homing_enabled = None
             self.position = self.machine = self.offset = None
             self.next_poll = 0.0
         elif line.startswith("ALARM:"):
@@ -493,6 +510,12 @@ class Sender:
                     return
                 if command.startswith("$13=") and line == "ok":
                     self.set_report_units(bool(float(command[4:])))
+                if command.startswith("$22=") and line == "ok":
+                    self.homing_enabled = bool(float(command[4:]))
+                if command == "$H" and line == "error:5":
+                    self.homing_enabled = False
+                    self.log_message("error", "error:5 · Поиск машинного нуля выключен в GRBL ($22=0).")
+                    return
                 if role == "job" and self.job:
                     if line == "ok":
                         self.job.acknowledged += 1
@@ -504,6 +527,8 @@ class Sender:
                         self.realtime(b"!")
         elif line in {"$13=0", "$13=1"}:
             self.set_report_units(line.endswith("1"))
+        elif line in {"$22=0", "$22=1"}:
+            self.homing_enabled = line.endswith("1")
         if self.pending and self.pending[0] == "setup":
             return
         self.log_message("error" if line.startswith(("error:", "ALARM:")) else "receive", line)
