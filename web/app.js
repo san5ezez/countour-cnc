@@ -4,6 +4,7 @@ const get = id => document.getElementById(id);
 const all = selector => [...document.querySelectorAll(selector)];
 const number = new Intl.NumberFormat('ru-RU');
 const dimensions = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 2});
+const heightNumber = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 6, useGrouping: false});
 const defaults = {
   steps: [.1, 1, 10, 50], step: 1, feed: 600, decimals: 3, baud: 115200,
   view: 'xy', grid: true, rapids: true, keyboard: false,
@@ -359,15 +360,17 @@ function renderRecovery() {
   if (!get('recovery-dialog').open) return;
   const plan = machine?.recovery;
   const spec = recoverySpec();
-  const matching = recoveryDraft?.revision === file?.revision && plan && spec.clearance === plan.clearance &&
+  const matching = recoveryDraft?.revision === file?.revision && plan &&
     spec.number === (spec.kind === 'line' ? plan.line : plan.number);
-  const current = matching ? plan : null;
+  const preview = matching ? plan : null;
+  const current = preview && spec.clearance === preview.clearance ? preview : null;
   const moving = ['lifting', 'travelling'].includes(plan?.stage);
   const inProgress = moving || current?.stage === 'checking';
   const active = isJobActive(machine?.job);
   const status = get('recovery-status');
   const detail = recoveryError || current?.detail;
   const hint = {
+    'needs-clearance': 'Укажите высоту не ниже расчётного минимума. На этой высоте ручка должна проходить над листом.',
     checking: 'Проверка режимов и рабочих смещений GRBL…',
     planned: 'Проверьте цель и подтвердите подвод.',
     lifting: 'Подъём ручки до безопасной высоты…',
@@ -375,19 +378,31 @@ function renderRecovery() {
     arrived: 'Станок прибыл. Подтвердите, чтобы опустить ручку и продолжить.',
   };
   const message = detail || hint[current?.stage] ||
-    (active ? 'Состояние можно сохранить сейчас. Для подвода остановите текущий запуск.' :
+    (preview ? 'Проверьте высоту и нажмите «Рассчитать подвод».' :
+    active ? 'Состояние можно сохранить сейчас. Для подвода остановите текущий запуск.' :
       'Введите номер команды или строку NC-файла. Начало выбранной команды рассчитывается по G-коду.');
   if (status.textContent !== message) status.textContent = message;
   status.classList.toggle('error', Boolean(detail));
   get('recovery-filename').textContent = file?.name || '—';
   const target = get('recovery-target');
-  target.hidden = !current;
-  if (current) {
-    const [x, y, z] = current.entry.map(value => dimensions.format(value));
-    const description = 'Команда ' + current.number + ' · строка ' + current.line + ' · ' + current.command +
+  target.hidden = !preview;
+  if (preview) {
+    const [x, y, z] = preview.entry.map(value => dimensions.format(value));
+    const description = 'Команда ' + preview.number + ' · строка ' + preview.line + ' · ' + preview.command +
       ' · X ' + x + ' · Y ' + y + ' · Z ' + z;
     if (target.textContent !== description) target.textContent = description;
   }
+  const heights = get('recovery-heights');
+  const useMinimum = get('recovery-use-minimum');
+  const currentZ = machine?.position?.[2];
+  const heightText = currentZ == null ? '—' : heightNumber.format(currentZ) + ' мм';
+  heights.hidden = !preview && currentZ == null;
+  const heightDetails = 'Текущий Z ' + heightText + (preview ?
+    ' · Z в начале команды ' + heightNumber.format(preview.entry[2]) + ' мм · минимум ' +
+      heightNumber.format(preview.minimum_clearance) + ' мм' : '');
+  if (heights.textContent !== heightDetails) heights.textContent = heightDetails;
+  useMinimum.hidden = preview?.stage !== 'needs-clearance';
+  useMinimum.disabled = busy || failed || !machine?.ready;
   for (const id of ['recovery-kind', 'recovery-number', 'recovery-clearance']) get(id).disabled = Boolean(inProgress || busy);
   get('recovery-prepare').disabled = !machine?.ready || busy || failed || Boolean(inProgress);
   get('recovery-confirm-origin').hidden = current?.stage !== 'planned' || !!detail;
@@ -417,12 +432,16 @@ function bindRecovery() {
   });
   for (const id of ['recovery-kind', 'recovery-number', 'recovery-clearance']) {
     get(id).addEventListener('input', () => {
-      recoveryDraft = null;
+      if (id !== 'recovery-clearance') recoveryDraft = null;
       recoveryError = '';
       get('recovery-origin').checked = false;
       renderRecovery();
     });
   }
+  get('recovery-use-minimum').addEventListener('click', () => {
+    get('recovery-clearance').value = machine.recovery.minimum_clearance;
+    get('recovery-clearance').dispatchEvent(new Event('input'));
+  });
   get('recovery-origin').addEventListener('change', renderRecovery);
   get('recovery-form').addEventListener('submit', event => {
     event.preventDefault();

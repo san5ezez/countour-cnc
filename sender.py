@@ -6,6 +6,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import asdict, dataclass
+from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from uuid import uuid4
 
@@ -634,13 +635,16 @@ class Sender:
                 raise ValueError("Дождитесь рабочих координат и остановите шпиндель.")
             origin = self.checkpoint_origin()
             entry = prepare_entry(self.program, number, origin)
-            if clearance is None or clearance < self.position[2] or clearance <= entry.position[2] + .01:
-                raise ValueError("Укажите безопасный Z не ниже текущего Z и выше высоты выбранной команды.")
-            rows = resumed_rows(self.program, number, entry, feed)
-            self.recovery_plan = {"id": uuid4().hex, "stage": "checking", "number": number, "clearance": clearance,
-                                  "entry": entry, "origin": origin, "feed": feed, "rows": rows,
+            height = Decimal(str(round(max(self.position[2], entry.position[2]), 9)))
+            minimum = float(height.quantize(Decimal("0.000001"), rounding=ROUND_CEILING))
+            valid = clearance is not None and clearance >= minimum
+            rows = resumed_rows(self.program, number, entry, feed) if valid else None
+            self.recovery_plan = {"id": uuid4().hex, "stage": "checking" if valid else "needs-clearance",
+                                  "number": number, "clearance": clearance, "rows": rows,
+                                  "entry": entry, "origin": origin, "feed": feed, "minimum_clearance": minimum,
                                   "offset": self.offset, "modal_ok": False, "zero_g92": False, "zero_tlo": False, "detail": ""}
-            self.send("$G", "recovery-check")
+            if valid:
+                self.send("$G", "recovery-check")
         elif action == "move-recovery":
             plan = self.checked_recovery(data, "planned")
             if not coordinates(self.position) or self.position[2] > plan["clearance"] + .001 or self.spindle:
@@ -781,6 +785,7 @@ class Sender:
                 "id": plan["id"], "stage": plan["stage"], "number": plan["number"],
                 "line": plan["entry"].line, "command": plan["entry"].command,
                 "entry": plan["entry"].position, "clearance": plan["clearance"], "detail": plan["detail"],
+                "minimum_clearance": plan["minimum_clearance"],
             }
             return {
                 "revision": self.revision, "port": self.port, "baud": self.baud,

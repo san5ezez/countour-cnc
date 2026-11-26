@@ -193,7 +193,7 @@ dialog::backdrop { background: #060b13bb; }
 .recovery-fields label :is(input, select) { margin-top: 5px; }
 .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .recovery-files { border-top: 1px solid var(--subtle); padding-top: 12px; }
-#recovery-status, #recovery-target { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+#recovery-status, #recovery-target, #recovery-heights { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 #recovery-target { color: #c4dfff; overflow-wrap: anywhere; }
 #recovery-status.error { color: #ffa1ac; }
 #recovery-confirm-origin { margin-top: 9px; line-height: 1.5; }

@@ -12,7 +12,7 @@ from program_edit import scale_xy, transform_xy
 from sender import MAX_PROGRAM_BYTES, Sender, parse_program, serial_ports
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.2.8"
+VERSION = "0.2.9"
 STATIC = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/style.css": ("style.css", "text/css; charset=utf-8"),
