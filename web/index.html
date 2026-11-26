@@ -118,6 +118,7 @@
           <div class="line-counter"><span id="job-lines">0 / 0 команд</span><span id="job-elapsed">00:00</span></div>
           <button id="start" class="primary full" type="button"><svg><use href="/icons.svg#play"></use></svg> Запустить</button>
           <div class="job-buttons"><button id="pause" class="secondary" type="button" disabled><svg><use href="/icons.svg#pause"></use></svg><span>Пауза</span></button><button id="stop" class="secondary stop" type="button" disabled><svg><use href="/icons.svg#stop"></use></svg> Стоп</button></div>
+          <button id="recovery-open" class="secondary full recovery-open" type="button">Продолжить с команды</button>
           <form id="override-form" class="override-form" hidden>
             <label for="override-percent">Подача программы, %</label>
             <div><input id="override-percent" type="number" min="10" max="200" step="1" value="100" required><button class="secondary" type="submit">Применить</button></div>
@@ -136,6 +137,7 @@
       <div class="page-heading">
         <div><h1>Редактор G-кода</h1><p>Настройка размеров, калибровка масштаба и разметка листа</p></div>
         <div class="editor-actions">
+          <button id="editor-recovery" class="secondary" type="button">Восстановление задания</button>
           <button id="editor-open" class="secondary" type="button"><svg><use href="/icons.svg#folder"></use></svg> Открыть файл</button>
           <button id="editor-export" class="primary" type="button">Скачать NC</button>
           <input id="editor-picker" type="file" accept=".nc,.gcode,.ngc,.tap,.txt,.cnc,.gc" hidden>
@@ -178,9 +180,34 @@
         </div>
       </div>
     </div>
-    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.4</span></footer>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.5</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
+  <dialog id="recovery-dialog" aria-labelledby="recovery-title">
+    <div class="dialog-head"><div><h2 id="recovery-title">Продолжить с команды</h2><p id="recovery-filename">—</p></div><button id="recovery-close" class="icon-button quiet" type="button" aria-label="Закрыть восстановление"><svg><use href="/icons.svg#close"></use></svg></button></div>
+    <form id="recovery-form">
+      <div class="recovery-fields">
+        <label>Отсчёт<select id="recovery-kind"><option value="command">Номер команды</option><option value="line">Строка файла</option></select></label>
+        <label>Номер<input id="recovery-number" type="number" min="1" step="1" required></label>
+        <label>Безопасный рабочий Z, мм<input id="recovery-clearance" type="number" min="-1000000" max="1000000" step="any"></label>
+      </div>
+      <p id="recovery-status" role="status"></p>
+      <p id="recovery-target" hidden></p>
+      <label id="recovery-confirm-origin" hidden><input id="recovery-origin" type="checkbox"> Исходный рабочий ноль выставлен, путь на указанной высоте свободен</label>
+      <div class="recovery-actions">
+        <button id="recovery-prepare" class="secondary" type="submit">Рассчитать подвод</button>
+        <button id="recovery-move" class="primary" type="button" hidden>Подвести</button>
+        <button id="recovery-run" class="primary" type="button" hidden>Подтвердить и продолжить</button>
+        <button id="recovery-cancel" class="secondary" type="button" hidden>Стоп перемещения</button>
+        <button id="recovery-stop-job" class="secondary" type="button" hidden>Остановить запуск</button>
+      </div>
+    </form>
+    <div class="recovery-actions recovery-files">
+      <button id="recovery-save" class="secondary" type="button">Сохранить состояние</button>
+      <button id="recovery-load" class="secondary" type="button">Открыть состояние</button>
+      <input id="recovery-picker" type="file" accept=".json,application/json" hidden>
+    </div>
+  </dialog>
   <dialog id="settings">
     <form id="settings-form">
       <div class="dialog-head"><div><h2>Настройки</h2><p>Параметры сохраняются в этом браузере.</p></div><button class="icon-button quiet" data-close="settings" type="button" aria-label="Закрыть настройки"><svg><use href="/icons.svg#close"></use></svg></button></div>

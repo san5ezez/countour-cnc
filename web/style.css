@@ -183,6 +183,20 @@ dialog::backdrop { background: #060b13bb; }
 .dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 17px; }
 .dialog-head h2 { font-size: 19px; }
 .dialog-head p { margin-top: 7px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.recovery-open { margin-top: 8px; }
+#recovery-dialog { width: min(600px, calc(100% - 24px)); }
+.recovery-fields { display: grid; grid-template-columns: 1fr .65fr 1fr; gap: 8px; }
+.recovery-fields label :is(input, select) { margin-top: 5px; }
+.recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.recovery-files { border-top: 1px solid var(--subtle); padding-top: 12px; }
+#recovery-status, #recovery-target { margin: 8px 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+#recovery-target { color: #c4dfff; overflow-wrap: anywhere; }
+#recovery-status.error { color: #ffa1ac; }
+#recovery-confirm-origin { margin-top: 9px; line-height: 1.5; }
+@media (max-width: 510px) {
+  .recovery-fields { grid-template-columns: 1fr 1fr; }
+  .recovery-fields label:last-child { grid-column: 1 / -1; }
+}
 .setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; }
 .setting-grid label :is(input, select) { margin-top: 6px; }
 .switches { display: grid; gap: 9px; margin-top: 12px; }

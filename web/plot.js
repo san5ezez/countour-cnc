@@ -239,7 +239,9 @@ export class Plot {
       this.tracedJob = job?.id;
       this.tracedData = job?.start_position ? parsePath(this.source, job.start_position) : null;
       this.traceSample = 0;
-      this.traceCursor = 0;
+      const segments = (this.tracedData || this.data).segments;
+      const first = job?.recovery_line ? segments.findIndex(segment => segment.line >= job.recovery_line) : 0;
+      this.traceCursor = first < 0 ? segments.length : first;
       if (this.executionView) this.schedule();
     }
     if (!job) return;
@@ -263,6 +265,11 @@ export class Plot {
   setSheet(sheet) {
     this.sheet = sheet;
     this.fit();
+  }
+
+  trackedLine() {
+    const segments = (this.tracedData || this.data).segments;
+    return segments[Math.floor(this.traceCursor)]?.line ?? segments.at(-1)?.line;
   }
 
   setTarget(target) {

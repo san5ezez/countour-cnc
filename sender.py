@@ -9,6 +9,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from recovery import close_position, coordinates, prepare_entry, resumed_rows
+
 COMMENT = re.compile(r"\([^()]*\)")
 WORD = re.compile(r"([A-Z])([+-]?(?:\d+(?:\.\d*)?|\.\d+))")
 LINE = re.compile(r"(?:[A-Z][+-]?(?:\d+(?:\.\d*)?|\.\d+))+")
@@ -177,6 +179,11 @@ class Simulator:
             )
         elif command.startswith("$13="):
             self.report_inches = bool(float(command[4:]))
+        elif command == "$G":
+            spindle = "M3" if self.spindle_on else "M5"
+            self.lines.append(f"[GC:G0 G54 G17 G21 G90 G94 {spindle} M9 T0 F0 S0]\n".encode())
+        elif command == "$#":
+            self.lines.append(b"[G92:0.000,0.000,0.000]\n[TLO:0.000]\n")
         elif command.startswith("$22="):
             self.homing_enabled = bool(float(command[4:]))
         elif command == "$H":
@@ -236,6 +243,7 @@ class Job:
     total: int
     id: str = ""
     start_position: list | None = None
+    recovery_line: int = 0
     acknowledged: int = 0
     line: int = 0
     status: str = "running"
@@ -285,6 +293,10 @@ class Sender:
         self.awaiting_idle = False
         self.job = None
         self.job_trace = deque(maxlen=90)
+        self.job_program = []
+        self.recovery_plan = None
+        self.recovery_origin = None
+        self.saved_checkpoint = None
         self.revision = uuid4().hex
         self.stop_requested_at = 0.0
         self.program_name = demo_path.name
@@ -321,6 +333,7 @@ class Sender:
         self.log_message("system", "Симулятор подключён." if port == "simulator" else f"Порт {port} открыт · {baud} бод.")
 
     def disconnect(self, reason="Соединение закрыто."):
+        self.recovery_plan = None
         if self.active():
             self.finish_job("error", reason)
         link, self.link = self.link, None
@@ -372,7 +385,7 @@ class Sender:
                 and (self.state == "Hold:0" or (self.state == "Idle" and not self.pending)))
 
     def require_idle(self):
-        if not self.idle() or self.active():
+        if not self.idle() or self.active() or self.recovery_moving():
             raise ValueError("Команда доступна, когда GRBL в состоянии Idle и программа не запущена.")
 
     def write(self, data):
@@ -388,7 +401,7 @@ class Sender:
         self.next_poll = 0.0
 
     def send(self, command, role):
-        timeout = 5 if role == "setup" else 600 if command == "$H" or (role == "job" and "G4" in command) else 90
+        timeout = 5 if role in {"setup", "recovery-check", "recovery-offsets"} else 600 if command == "$H" or (role == "job" and "G4" in command) else 90
         self.write(command.encode("ascii") + b"\n")
         self.pending = (role, command)
         self.pending_deadline = time.monotonic() + timeout
@@ -442,6 +455,7 @@ class Sender:
         self.realtime(bytes([byte]))
 
     def reset(self):
+        self.recovery_plan = None
         self.realtime(b"\x18")
         self.pending = None
         self.awaiting_idle = False
@@ -457,27 +471,129 @@ class Sender:
         with self.lock:
             return self.perform(action, data)
 
+    def recovery_moving(self):
+        return self.recovery_plan is not None and self.recovery_plan["stage"] in {"lifting", "travelling"}
+
+    def recovery_point(self, plan):
+        return (*plan["entry"].position[:2], plan["clearance"])
+
+    def issue_approach(self, command):
+        self.recovery_plan["sent"] = time.monotonic()
+        self.send(command, "jog")
+
+    def continue_approach(self, plan):
+        x, y, _ = self.recovery_point(plan)
+        if close_position(self.position, self.recovery_point(plan)):
+            plan["stage"] = "arrived"
+            self.log_message("system", f"Подвод к команде {plan['number']} завершён. Ожидание подтверждения.")
+        else:
+            plan["stage"] = "travelling"
+            self.issue_approach(f"$J=G90G21X{x:.6f}Y{y:.6f}F{plan['feed']:.3f}")
+
+    def recovery_failure(self, message):
+        self.recovery_plan["stage"] = "error"
+        self.recovery_plan["detail"] = message
+        self.log_message("error", message)
+
+    def advance_recovery(self, now):
+        if not self.recovery_moving():
+            return
+        plan = self.recovery_plan
+        if self.state.split(":", 1)[0] in {"Alarm", "Door", "Sleep", "Hold"}:
+            self.recovery_failure("Подвод прерван контроллером.")
+            return
+        if not self.idle() or self.last_status <= plan["sent"]:
+            return
+        if plan["offset"] is not None and not close_position(self.offset, plan["offset"]):
+            self.recovery_failure("Рабочее смещение изменилось во время подвода.")
+            return
+        x, y, z = self.recovery_point(plan)
+        expected = (*plan["lift_xy"], z) if plan["stage"] == "lifting" else (x, y, z)
+        if not close_position(self.position, expected):
+            if now - plan["sent"] > 1:
+                self.recovery_failure("GRBL не подтвердил прибытие в заданную точку.")
+            return
+        self.continue_approach(plan)
+
+    def begin_job(self, rows, origin, recovery_line=0):
+        self.job_program = rows
+        self.job = Job(len(rows), id=uuid4().hex, start_position=origin,
+                       recovery_line=recovery_line, started_at=time.monotonic())
+        self.job_trace.clear()
+
+    def checked_recovery(self, data, stage):
+        plan = self.recovery_plan
+        if plan is None or plan["id"] != data.get("id") or plan["stage"] != stage:
+            raise ValueError("Сначала подготовьте восстановление и дождитесь нужного этапа.")
+        if data.get("confirmed") is not True:
+            raise ValueError("Подтвердите выбранное действие.")
+        self.require_idle()
+        if plan["offset"] is not None and not close_position(self.offset, plan["offset"]):
+            raise ValueError("Рабочее смещение изменилось. Подготовьте подвод заново.")
+        return plan
+
+    def checkpoint(self, data):
+        number = data.get("number")
+        if type(number) is not int:
+            raise ValueError("Укажите целый номер.")
+        if data.get("kind") == "line":
+            original = number
+            number = next((index for index, (line, _) in enumerate(self.program, 1) if line == original), None)
+            if number is None:
+                raise ValueError("На этой строке файла нет команды G-кода.")
+        if type(number) is not int or not 1 <= number <= len(self.program):
+            raise ValueError(f"Укажите номер команды от 1 до {len(self.program)}.")
+        clearance = data.get("clearance")
+        if clearance is not None and (type(clearance) not in (float, int) or not -1_000_000 <= clearance <= 1_000_000):
+            raise ValueError("Укажите допустимую рабочую высоту Z.")
+        return {"number": number, "clearance": clearance}
+
     def perform(self, action, data):
+        if action in {"connect", "upload", "load-recovery", "start", "home", "zero", "console", "jog", "jog-hold", "jog-point"}:
+            if self.recovery_moving():
+                raise ValueError("Сначала дождитесь завершения подвода или остановите перемещение.")
+            self.recovery_plan = None
         if action == "connect":
             self.connect(data.get("port"), data.get("baud"))
         elif action == "disconnect":
             if self.active():
                 raise ValueError("Сначала остановите программу.")
             self.disconnect()
-        elif action == "upload":
+        elif action in {"upload", "load-recovery"}:
             if self.active():
                 raise ValueError("Дождитесь завершения текущей программы.")
             source = data.get("source")
             rows = parse_program(source)
+            origin = checkpoint = None
+            if action == "load-recovery":
+                if data.get("version") != 1:
+                    raise ValueError("Неподдерживаемая версия файла состояния.")
+                origin = data.get("origin")
+                if origin is not None and not coordinates(origin):
+                    raise ValueError("Некорректные координаты в файле состояния.")
+                number, clearance = data.get("number"), data.get("clearance")
+                if type(number) is not int or not 1 <= number <= len(rows):
+                    raise ValueError("Команда из файла состояния отсутствует в программе.")
+                if clearance is not None and (type(clearance) not in (float, int) or not -1_000_000 <= clearance <= 1_000_000):
+                    raise ValueError("Некорректная высота в файле состояния.")
+                checkpoint = {"number": number, "clearance": clearance}
             name = data.get("name")
             if not isinstance(name, str) or not name.strip():
                 raise ValueError("Укажите имя файла.")
             self.program_name = Path(name.replace("\\", "/")).name[:180]
             self.source, self.program, self.job = source, rows, None
+            self.recovery_origin, self.saved_checkpoint = origin, checkpoint
+            self.job_program = []
             self.job_trace.clear()
             self.revision = uuid4().hex
             self.log_message("system", f"Загружен файл {self.program_name} · {len(rows)} команд.")
             return self.file_info()
+        elif action == "save-recovery":
+            if data.get("revision") != self.revision:
+                raise ValueError("Программа изменилась. Откройте восстановление заново.")
+            checkpoint = self.checkpoint(data)
+            return {"version": 1, **checkpoint, "name": self.program_name, "source": self.source,
+                    "origin": self.recovery_origin}
         elif action == "clear-log":
             self.log.clear()
         elif action == "jog-release":
@@ -495,9 +611,45 @@ class Sender:
             self.require_idle()
             if data.get("revision") != self.revision:
                 raise ValueError("Программа изменилась. Проверьте файл и запустите его снова.")
-            self.job = Job(len(self.program), id=uuid4().hex, start_position=self.position, started_at=time.monotonic())
-            self.job_trace.clear()
+            self.recovery_origin = self.position
+            self.begin_job(self.program, self.position)
             self.log_message("system", f"Запуск программы {self.program_name}.")
+        elif action == "prepare-recovery":
+            self.require_idle()
+            if data.get("revision") != self.revision:
+                raise ValueError("Программа изменилась. Откройте восстановление заново.")
+            spec = self.checkpoint(data)
+            number, clearance = spec["number"], spec["clearance"]
+            feed = jog_feed(data.get("feed"))
+            if not coordinates(self.position) or self.spindle:
+                raise ValueError("Дождитесь рабочих координат и остановите шпиндель.")
+            origin = self.recovery_origin if self.recovery_origin is not None else self.position
+            entry = prepare_entry(self.program, number, origin)
+            if clearance is None or clearance < self.position[2] or clearance <= entry.position[2] + .01:
+                raise ValueError("Укажите безопасный Z не ниже текущего Z и выше высоты выбранной команды.")
+            rows = resumed_rows(self.program, number, entry, feed)
+            self.recovery_plan = {"id": uuid4().hex, "stage": "checking", "number": number, "clearance": clearance,
+                                  "entry": entry, "origin": origin, "feed": feed, "rows": rows,
+                                  "offset": self.offset, "modal_ok": False, "zero_g92": False, "zero_tlo": False, "detail": ""}
+            self.send("$G", "recovery-check")
+        elif action == "move-recovery":
+            plan = self.checked_recovery(data, "planned")
+            if not coordinates(self.position) or self.position[2] > plan["clearance"] + .001 or self.spindle:
+                raise ValueError("Проверьте положение Z и состояние шпинделя перед подводом.")
+            plan["stage"] = "lifting"
+            plan["lift_xy"] = self.position[:2]
+            if abs(self.position[2] - plan["clearance"]) <= .001:
+                self.continue_approach(plan)
+            else:
+                self.issue_approach(f"$J=G90G21Z{plan['clearance']:.6f}F{plan['feed']:.3f}")
+        elif action == "start-recovery":
+            plan = self.checked_recovery(data, "arrived")
+            if not close_position(self.position, self.recovery_point(plan)) or self.spindle:
+                raise ValueError("Положение изменилось. Выполните подвод заново.")
+            self.recovery_origin = plan["origin"]
+            self.recovery_plan = None
+            self.begin_job(plan["rows"], plan["origin"], plan["entry"].line)
+            self.log_message("system", f"Продолжение с команды {plan['number']} (строка {plan['entry'].line}).")
         elif action == "pause":
             if not self.job or self.job.status != "running":
                 raise ValueError("Нет запущенной программы.")
@@ -585,6 +737,7 @@ class Sender:
                 raise ValueError("Дождитесь рабочих координат от GRBL.")
             self.send(f"$J=G90G21X{x:.3f}Y{y:.3f}F{feed:.1f}", "jog")
         elif action == "jog-cancel":
+            self.recovery_plan = None
             if not self.active() and (self.jog_motion or self.held_jog or self.state == "Jog"):
                 self.cancel_jog()
         elif action == "console":
@@ -604,7 +757,8 @@ class Sender:
 
     def file_info(self):
         with self.lock:
-            return {"name": self.program_name, "source": self.source, "lines": len(self.program), "revision": self.revision}
+            return {"name": self.program_name, "source": self.source, "lines": len(self.program),
+                    "revision": self.revision, "checkpoint": self.saved_checkpoint}
 
     def snapshot(self):
         with self.lock:
@@ -613,6 +767,12 @@ class Sender:
                 job = {key: value for key, value in asdict(self.job).items() if key not in {"started_at", "finished_at"}}
                 job["elapsed"] = int((self.job.finished_at or time.monotonic()) - self.job.started_at)
                 job["trace"] = list(self.job_trace) if self.job.status != "complete" else []
+            plan = self.recovery_plan
+            recovery = None if plan is None else {
+                "id": plan["id"], "stage": plan["stage"], "number": plan["number"],
+                "line": plan["entry"].line, "command": plan["entry"].command,
+                "entry": plan["entry"].position, "clearance": plan["clearance"], "detail": plan["detail"],
+            }
             return {
                 "revision": self.revision, "port": self.port, "baud": self.baud,
                 "homing_enabled": self.homing_enabled,
@@ -621,11 +781,11 @@ class Sender:
                 "feed_override": self.feed_override,
                 "override_target": self.override_target,
                 "state": self.state if self.fresh() or not self.link else "Connecting",
-                "ready": self.idle() and not self.active(),
+                "ready": self.idle() and not self.active() and not self.recovery_moving(),
                 "busy": bool(self.pending or self.awaiting_idle or self.resetting or (self.link and self.report_scale is None)),
                 "position": self.position if self.fresh() else None, "machine": self.machine if self.fresh() else None,
                 "feed": self.feed if self.fresh() else 0, "spindle": self.spindle if self.fresh() else 0,
-                "job": job, "log": list(self.log),
+                "job": job, "recovery": recovery, "log": list(self.log),
             }
 
     def status_report(self, line):
@@ -684,6 +844,15 @@ class Sender:
             self.position = self.machine = self.offset = None
 
     def on_line(self, line):
+        if self.recovery_plan and self.pending:
+            role = self.pending[0]
+            if role == "recovery-check" and line.startswith("[GC:"):
+                modes = line[4:].rstrip("]").split()
+                self.recovery_plan["modal_ok"] = "G54" in modes and "M5" in modes and "M9" in modes
+            if role == "recovery-offsets":
+                offset = re.fullmatch(r"\[(G92|TLO):(-?0(?:\.0+)?(?:,-?0(?:\.0+)?){0,2})\]", line)
+                if offset and len(offset[2].split(",")) == (3 if offset[1] == "G92" else 1):
+                    self.recovery_plan["zero_" + offset[1].lower()] = True
         if line.startswith("<") and line.endswith(">"):
             self.status_report(line)
             return
@@ -716,6 +885,8 @@ class Sender:
                 self.awaiting_idle = True
                 self.next_poll = 0.0
                 if role in {"jog", "held-jog"}:
+                    if line != "ok" and self.recovery_moving():
+                        self.recovery_failure(f"GRBL отклонил подвод ({line}).")
                     if self.jog_cancel_after_reply:
                         self.jog_cancel_after_reply = False
                         self.realtime(JOG_CANCEL)
@@ -723,6 +894,16 @@ class Sender:
                         self.cancel_jog()
                     if role == "held-jog" and line == "ok":
                         return
+                if role == "recovery-check" and self.recovery_plan:
+                    if line == "ok" and self.recovery_plan["modal_ok"]:
+                        self.send("$#", "recovery-offsets")
+                    else:
+                        self.recovery_failure("Для восстановления выберите G54, выключите шпиндель и охлаждение (M5 и M9).")
+                if role == "recovery-offsets" and self.recovery_plan:
+                    if line == "ok" and self.recovery_plan["zero_g92"] and self.recovery_plan["zero_tlo"]:
+                        self.recovery_plan["stage"] = "planned"
+                    else:
+                        self.recovery_failure("Для восстановления нужны нулевые дополнительные смещения G92 и TLO.")
                 if role == "setup":
                     if line != "ok" or self.report_scale is None:
                         self.disconnect("GRBL не сообщил единицы координат в настройке $13.")
@@ -783,6 +964,7 @@ class Sender:
             return
         self.advance_held_jog(now)
         self.advance_override(now)
+        self.advance_recovery(now)
         if (self.active() and self.job.status == "stopping" and self.fresh()
                 and self.last_status > self.stop_requested_at
                 and (self.state == "Hold:0" or (self.state == "Idle" and not self.pending))):
@@ -794,7 +976,7 @@ class Sender:
                     self.finish_job("complete")
                     self.log_message("system", "Программа завершена.")
             elif self.state in {"Idle", "Run"}:
-                number, command = self.program[self.job.acknowledged]
+                number, command = self.job_program[self.job.acknowledged]
                 self.job.line = number
                 self.send(command, "job")
         if not self.pending and self.report_scale is None and self.fresh() and self.state in {"Idle", "Alarm"}:

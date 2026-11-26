@@ -43,6 +43,8 @@ let renderedLog = '';
 let stateSequence = 0;
 let gesture = null;
 let pointMode = false;
+let recoveryDraft = null;
+let recoveryError = '';
 
 function savePreferences() {
   try {
@@ -140,8 +142,10 @@ function updateControls() {
   jogStop.hidden = !machine?.jog_motion && !gesture?.started;
   jogStop.disabled = failed || jogStop.hidden;
   get('point-mode').disabled = !pointMode && (!ready || plot.view !== 'xy' || !machine?.position);
+  get('recovery-open').disabled = !file;
   for (const button of all('[data-zero]')) button.disabled = !ready || coordinate !== 'position';
   updateFeedOverride(job, locked);
+  renderRecovery();
 }
 
 function updateFeedOverride(job, locked) {
@@ -290,12 +294,13 @@ async function action(name, data = {}) {
   updateControls();
   try {
     const result = await request('/api/action', {action: name, ...data});
-    if (name === 'upload') showFile(result);
+    if (name === 'upload' || name === 'load-recovery') showFile(result);
     else machine = result;
     failed = false;
     return true;
   } catch (error) {
-    notify(error.message, true);
+    if (name.includes('recovery') && get('recovery-dialog').open) recoveryError = error.message;
+    else notify(error.message, true);
     return false;
   } finally {
     busy = false;
@@ -321,6 +326,163 @@ function confirmAction(title, copy, label, callback) {
 function handleHardware(label, copy, callback) {
   if (machine?.port === 'simulator') callback();
   else confirmAction(label, copy, label, callback);
+}
+
+function recoverySpec() {
+  const clearance = get('recovery-clearance').valueAsNumber;
+  return {
+    revision: file?.revision, kind: get('recovery-kind').value,
+    number: get('recovery-number').valueAsNumber,
+    clearance: Number.isFinite(clearance) ? clearance : null,
+  };
+}
+
+function openRecovery() {
+  if (!file) return;
+  endGesture();
+  if (pointMode) setPointMode(false);
+  const checkpoint = file.checkpoint;
+  const suggested = machine?.job ? plot.trackedLine() : null;
+  get('recovery-kind').value = suggested && !checkpoint ? 'line' : 'command';
+  get('recovery-number').value = checkpoint?.number ?? suggested ?? 1;
+  get('recovery-clearance').value = checkpoint?.clearance ?? '';
+  get('recovery-origin').checked = false;
+  recoveryDraft = null;
+  recoveryError = '';
+  get('recovery-dialog').showModal();
+  renderRecovery();
+}
+
+function renderRecovery() {
+  if (!get('recovery-dialog').open) return;
+  const plan = machine?.recovery;
+  const spec = recoverySpec();
+  const matching = recoveryDraft?.revision === file?.revision && plan && spec.clearance === plan.clearance &&
+    spec.number === (spec.kind === 'line' ? plan.line : plan.number);
+  const current = matching ? plan : null;
+  const moving = ['lifting', 'travelling'].includes(plan?.stage);
+  const inProgress = moving || current?.stage === 'checking';
+  const active = isJobActive(machine?.job);
+  const status = get('recovery-status');
+  const detail = recoveryError || current?.detail;
+  const hint = {
+    checking: 'Проверка режимов и рабочих смещений GRBL…',
+    planned: 'Проверьте цель и подтвердите подвод.',
+    lifting: 'Подъём ручки до безопасной высоты…',
+    travelling: 'Переезд к началу команды…',
+    arrived: 'Станок прибыл. Подтвердите, чтобы опустить ручку и продолжить.',
+  };
+  const message = detail || hint[current?.stage] ||
+    (active ? 'Состояние можно сохранить сейчас. Для подвода остановите текущий запуск.' :
+      'Введите номер команды или строку NC-файла. Начало выбранной команды рассчитывается по G-коду.');
+  if (status.textContent !== message) status.textContent = message;
+  status.classList.toggle('error', Boolean(detail));
+  get('recovery-filename').textContent = file?.name || '—';
+  const target = get('recovery-target');
+  target.hidden = !current;
+  if (current) {
+    const [x, y, z] = current.entry.map(value => dimensions.format(value));
+    const description = 'Команда ' + current.number + ' · строка ' + current.line + ' · ' + current.command +
+      ' · X ' + x + ' · Y ' + y + ' · Z ' + z;
+    if (target.textContent !== description) target.textContent = description;
+  }
+  for (const id of ['recovery-kind', 'recovery-number', 'recovery-clearance']) get(id).disabled = Boolean(inProgress || busy);
+  get('recovery-prepare').disabled = !machine?.ready || busy || failed || Boolean(inProgress);
+  get('recovery-confirm-origin').hidden = current?.stage !== 'planned' || !!detail;
+  const move = get('recovery-move');
+  move.hidden = current?.stage !== 'planned' || !!detail;
+  move.disabled = busy || !machine?.ready || !get('recovery-origin').checked;
+  const run = get('recovery-run');
+  run.hidden = current?.stage !== 'arrived' || !!detail;
+  run.disabled = busy || !machine?.ready;
+  get('recovery-cancel').hidden = !moving;
+  get('recovery-stop-job').hidden = !active || moving;
+  get('recovery-stop-job').disabled = busy || machine?.job?.status === 'stopping';
+  get('recovery-save').disabled = busy || !file;
+  get('recovery-load').disabled = busy || active || moving;
+}
+
+function bindRecovery() {
+  const dialog = get('recovery-dialog');
+  get('recovery-open').addEventListener('click', openRecovery);
+  get('editor-recovery').addEventListener('click', () => {
+    showWorkspace();
+    openRecovery();
+  });
+  get('recovery-close').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => {
+    if (['lifting', 'travelling'].includes(machine?.recovery?.stage)) action('jog-cancel');
+  });
+  for (const id of ['recovery-kind', 'recovery-number', 'recovery-clearance']) {
+    get(id).addEventListener('input', () => {
+      recoveryDraft = null;
+      recoveryError = '';
+      get('recovery-origin').checked = false;
+      renderRecovery();
+    });
+  }
+  get('recovery-origin').addEventListener('change', renderRecovery);
+  get('recovery-form').addEventListener('submit', event => {
+    event.preventDefault();
+    recoveryError = '';
+    const feed = jogFeed();
+    if (feed === undefined) {
+      recoveryError = 'Укажите допустимую подачу в панели «Перемещение».';
+      renderRecovery();
+      return;
+    }
+    const spec = recoverySpec();
+    recoveryDraft = spec;
+    get('recovery-origin').checked = false;
+    action('prepare-recovery', {...spec, feed});
+  });
+  get('recovery-move').addEventListener('click', async () => {
+    const moved = await action('move-recovery', {id: machine?.recovery?.id, confirmed: get('recovery-origin').checked});
+    if (moved && !dialog.open && ['lifting', 'travelling'].includes(machine?.recovery?.stage)) action('jog-cancel');
+  });
+  get('recovery-run').addEventListener('click', async () => {
+    if (await action('start-recovery', {id: machine?.recovery?.id, confirmed: true})) dialog.close();
+  });
+  get('recovery-cancel').addEventListener('click', () => action('jog-cancel'));
+  get('recovery-stop-job').addEventListener('click', () => action('stop'));
+  get('recovery-save').addEventListener('click', async () => {
+    const field = get('recovery-number');
+    if (!field.reportValidity()) return;
+    try {
+      const result = await request('/api/action', {action: 'save-recovery', ...recoverySpec()});
+      const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], {type: 'application/json'}));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.name.replace(/\.[^.]+$/, '') + '.contour-job.json';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      recoveryError = error.message;
+      renderRecovery();
+    }
+  });
+  get('recovery-load').addEventListener('click', () => get('recovery-picker').click());
+  get('recovery-picker').addEventListener('change', async event => {
+    const selected = event.target.files[0];
+    event.target.value = '';
+    if (!selected) return;
+    try {
+      if (selected.size > 12_004_096) throw new Error('Файл состояния слишком большой.');
+      const {version, name, source, number, origin, clearance} = JSON.parse(await selected.text());
+      recoveryError = '';
+      if (await action('load-recovery', {version, name, source, number, origin, clearance})) {
+        recoveryDraft = null;
+        get('recovery-kind').value = 'command';
+        get('recovery-number').value = file.checkpoint.number;
+        get('recovery-clearance').value = file.checkpoint.clearance ?? '';
+        get('recovery-origin').checked = false;
+        renderRecovery();
+      }
+    } catch {
+      recoveryError = 'Не удалось прочитать файл состояния Контур CNC.';
+      renderRecovery();
+    }
+  });
 }
 
 function renderSteps() {
@@ -688,6 +850,7 @@ function bindDrop() {
 
 applyPreferences();
 bindButtons();
+bindRecovery();
 bindJog();
 bindDrop();
 updateControls();

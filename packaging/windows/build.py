@@ -46,7 +46,7 @@ def create_payload(path, go_license):
             if not member.endswith("/"):
                 payload.writestr(f"app/{member}", serial.read(member))
         for source in [
-            ROOT / "app.py", ROOT / "sender.py", ROOT / "program_edit.py", ROOT / "README.md",
+            ROOT / "app.py", ROOT / "sender.py", ROOT / "program_edit.py", ROOT / "recovery.py", ROOT / "README.md",
             *sorted((ROOT / "web").iterdir()), ROOT / "examples" / "rosette.nc",
         ]:
             payload.writestr(f"app/{source.relative_to(ROOT).as_posix()}", source.read_bytes())
