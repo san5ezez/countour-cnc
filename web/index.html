@@ -64,11 +64,11 @@
         <section class="panel visualization">
           <div class="visual-head">
             <div><h2>Траектория</h2><p id="visual-file">Предпросмотр G-кода</p></div>
-            <div id="views" class="segmented views" aria-label="Плоскость просмотра"><button type="button" data-view="iso" class="active">3D</button><button type="button" data-view="xy">XY</button><button type="button" data-view="xz">XZ</button><button type="button" data-view="yz">YZ</button></div>
+            <div id="views" class="segmented views" aria-label="Плоскость просмотра"><button type="button" data-view="iso">3D</button><button type="button" data-view="xy" class="active">XY</button><button type="button" data-view="xz">XZ</button><button type="button" data-view="yz">YZ</button></div>
           </div>
           <div id="plot-area" class="plot-area">
             <canvas id="plot" aria-label="График траектории инструмента"></canvas>
-            <span id="plot-mode" class="canvas-chip">ИЗОМЕТРИЯ</span>
+            <span id="plot-mode" class="canvas-chip">ВИД СВЕРХУ · XY</span>
             <div class="plot-tools" aria-label="Масштаб">
               <button id="zoom-in" class="icon-button" type="button" aria-label="Приблизить" title="Приблизить"><svg><use href="/icons.svg#plus"></use></svg></button>
               <button id="zoom-out" class="icon-button" type="button" aria-label="Отдалить" title="Отдалить"><svg><use href="/icons.svg#minus"></use></svg></button>
@@ -98,6 +98,7 @@
             <div class="axis axis-z"><span>Z</span><output id="position-Z">—</output></div>
           </div>
           <div class="coordinate-actions">
+            <button class="secondary" data-zero="XY" type="button" title="Установить рабочий ноль по осям X и Y">Обнулить XY</button>
             <button class="secondary zero-z" data-zero="Z" type="button" title="Установить рабочий ноль по оси Z">Обнулить Z</button>
             <button class="secondary" data-zero="XYZ" type="button">Обнулить XYZ</button>
           </div>
@@ -165,7 +166,7 @@
         </div>
       </div>
     </div>
-    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.1</span></footer>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.2</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings">

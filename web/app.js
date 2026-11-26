@@ -6,7 +6,7 @@ const number = new Intl.NumberFormat('ru-RU');
 const dimensions = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 2});
 const defaults = {
   steps: [.1, 1, 10, 50], step: 1, feed: 600, decimals: 3, baud: 115200,
-  view: 'iso', grid: true, rapids: true, keyboard: false,
+  view: 'xy', grid: true, rapids: true, keyboard: false,
 };
 const settingsKey = 'contour-cnc.settings.v1';
 const viewLabels = {iso: 'ИЗОМЕТРИЯ', xy: 'ВИД СВЕРХУ · XY', xz: 'ВИД СПЕРЕДИ · XZ', yz: 'ВИД СБОКУ · YZ'};

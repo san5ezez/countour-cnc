@@ -126,6 +126,8 @@ function gridInterval(span) {
   return (ideal / base < 2 ? 2 : ideal / base < 5 ? 5 : 10) * base;
 }
 
+const axisNumber = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 6, useGrouping: false});
+
 export class Plot {
   constructor(canvas) {
     this.canvas = canvas;
@@ -220,9 +222,15 @@ export class Plot {
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     ctx.clearRect(0, 0, width, height);
 
-    const sheet = view === 'xy' ? this.sheet : null;
-    const min = sheet ? [Math.min(data.min[0], sheet.x), Math.min(data.min[1], sheet.y), data.min[2]] : data.min;
-    const max = sheet ? [Math.max(data.max[0], sheet.x + sheet.width), Math.max(data.max[1], sheet.y + sheet.height), data.max[2]] : data.max;
+    const xy = view === 'xy';
+    const sheet = xy ? this.sheet : null;
+    const empty = xy && !sheet && data.min[0] === data.max[0] && data.min[1] === data.max[1];
+    const min = xy ? [Math.min(data.min[0], 0), Math.min(data.min[1], 0), data.min[2]] : data.min;
+    const max = xy ? [
+      Math.max(data.max[0], sheet?.width || (empty ? 110 : 0)),
+      Math.max(data.max[1], sheet?.height || (empty ? 110 : 0)),
+      data.max[2],
+    ] : data.max;
     const corners = [min[0], max[0]].flatMap(x =>
       [min[1], max[1]].flatMap(y => [min[2], max[2]].map(z => project([x, y, z], view))));
     const extents = [0, 1].map(axis => [Math.min(...corners.map(p => p[axis])), Math.max(...corners.map(p => p[axis]))]);
@@ -237,9 +245,11 @@ export class Plot {
       ctx.moveTo(...toCanvas(a));
       ctx.lineTo(...toCanvas(b));
     };
+    const origin = xy ? toCanvas([0, 0, 0]) : null;
+    const tick = xy ? gridInterval(12 * 42 / scale) : 0;
 
     if (sheet) {
-      const [left, top] = toCanvas([sheet.x, sheet.y + sheet.height, 0]);
+      const [left, top] = toCanvas([0, sheet.height, 0]);
       const paperWidth = sheet.width * scale;
       const paperHeight = sheet.height * scale;
       ctx.fillStyle = '#e7eef7';
@@ -265,9 +275,13 @@ export class Plot {
 
     if (this.grid) {
       const [horizontal, vertical] = view === 'xz' ? [0, 2] : view === 'yz' ? [1, 2] : [0, 1];
-      const interval = gridInterval(Math.max(max[horizontal] - min[horizontal], max[vertical] - min[vertical], 20));
-      const low = [horizontal, vertical].map(axis => (Math.floor(min[axis] / interval) - 3) * interval);
-      const high = [horizontal, vertical].map(axis => (Math.ceil(max[axis] / interval) + 3) * interval);
+      const divisions = xy && Math.round(tick / 10 ** Math.floor(Math.log10(tick))) !== 5 ? 2 : 5;
+      const interval = xy ? tick / divisions : gridInterval(Math.max(max[horizontal] - min[horizontal], max[vertical] - min[vertical], 20));
+      const lower = xy ? [-origin[0] / scale, (origin[1] - height) / scale] : [min[horizontal], min[vertical]];
+      const upper = xy ? [(width - origin[0]) / scale, origin[1] / scale] : [max[horizontal], max[vertical]];
+      const padding = xy ? 1 : 3;
+      const low = lower.map(value => (Math.floor(value / interval) - padding) * interval);
+      const high = upper.map(value => (Math.ceil(value / interval) + padding) * interval);
       const make = (a, b) => {
         const point = [0, 0, view === 'iso' ? Math.min(0, min[2]) : 0];
         point[horizontal] = a;
@@ -278,17 +292,19 @@ export class Plot {
         ctx.beginPath();
         for (let index = 0; index <= Math.round((high[0] - low[0]) / interval); index++) {
           const value = low[0] + index * interval;
-          if ((Math.round(value / interval) % 5 === 0) === major) trace(make(value, low[1]), make(value, high[1]));
+          if ((Math.round(value / interval) % divisions === 0) === major) trace(make(value, low[1]), make(value, high[1]));
         }
         for (let index = 0; index <= Math.round((high[1] - low[1]) / interval); index++) {
           const value = low[1] + index * interval;
-          if ((Math.round(value / interval) % 5 === 0) === major) trace(make(low[0], value), make(high[0], value));
+          if ((Math.round(value / interval) % divisions === 0) === major) trace(make(low[0], value), make(high[0], value));
         }
         ctx.strokeStyle = major ? '#29425e' : '#1c3048';
         ctx.lineWidth = 1;
         ctx.stroke();
       }
     }
+
+    if (xy) this.drawXYAxes(ctx, width, height, origin, scale, tick);
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -327,7 +343,75 @@ export class Plot {
       ctx.fillStyle = '#ffc577';
       ctx.fill();
     }
-    this.drawAxes(ctx, width, height);
+    if (!xy) this.drawAxes(ctx, width, height);
+  }
+
+  drawXYAxes(ctx, width, height, [x, y], scale, interval) {
+    const gap = 12;
+    const axes = [
+      {name: 'X', zero: x, cross: y, length: width, crossLength: height, color: '#e45367', vertical: false},
+      {name: 'Y', zero: height - y, cross: x, length: height, crossLength: width, color: '#2fb58b', vertical: true},
+    ];
+    ctx.font = '11px monospace';
+    ctx.lineWidth = 1.4;
+    const label = (text, ...position) => {
+      ctx.save();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#111b2c';
+      ctx.strokeText(text, ...position);
+      ctx.fillText(text, ...position);
+      ctx.restore();
+    };
+    for (const axis of axes) {
+      const {name, zero, cross, length, crossLength, color, vertical} = axis;
+      if (cross < 0 || cross > crossLength) continue;
+      const point = (value, offset = 0) => vertical ? [cross + offset, height - value] : [value, cross + offset];
+      const start = Math.max(gap, Math.min(length - gap, zero));
+      const line = (a, b) => {
+        ctx.beginPath();
+        ctx.moveTo(...point(a));
+        ctx.lineTo(...point(b));
+        ctx.stroke();
+      };
+      ctx.strokeStyle = color;
+      if (start > gap) {
+        ctx.setLineDash([4, 4]);
+        line(gap, start);
+      }
+      ctx.setLineDash([]);
+      if (start < length - gap) {
+        line(start, length - gap);
+        ctx.fillStyle = color;
+        ctx.textAlign = vertical ? 'left' : 'right';
+        ctx.textBaseline = 'bottom';
+        label(name, ...point(length - gap, vertical ? 5 : -5));
+      }
+      const labelSide = vertical ? (cross < 30 ? 1 : -1) : (cross > crossLength - 24 ? -1 : 1);
+      const pixels = interval * scale;
+      for (let index = Math.ceil((gap - zero) / pixels); index <= Math.floor((length - 2 * gap - zero) / pixels); index++) {
+        if (index === 0) continue;
+        const position = zero + index * pixels;
+        ctx.beginPath();
+        ctx.moveTo(...point(position, -3));
+        ctx.lineTo(...point(position, 3));
+        ctx.stroke();
+        ctx.fillStyle = '#a5b4ca';
+        ctx.textAlign = vertical ? (labelSide > 0 ? 'left' : 'right') : 'center';
+        ctx.textBaseline = vertical ? 'middle' : (labelSide > 0 ? 'top' : 'bottom');
+        label(axisNumber.format(index * interval), ...point(position, labelSide * 6));
+      }
+    }
+    if (x >= 0 && x <= width && y >= 0 && y <= height) {
+      ctx.beginPath();
+      ctx.arc(x, y, 4.5, 0, tau);
+      ctx.fillStyle = '#ffc577';
+      ctx.fill();
+      ctx.textAlign = x > width - 38 ? 'right' : 'left';
+      ctx.textBaseline = y > height - 20 ? 'bottom' : 'top';
+      label('0, 0', x > width - 38 ? x - 7 : x + 7, y > height - 20 ? y - 7 : y + 7);
+    }
+    ctx.textAlign = 'start';
+    ctx.textBaseline = 'alphabetic';
   }
 
   drawAxes(ctx, width, height) {

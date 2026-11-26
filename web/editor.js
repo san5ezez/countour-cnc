@@ -58,14 +58,14 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
     const width = landscape ? format.height : format.width;
     const height = landscape ? format.width : format.height;
     const [min, max] = bounds;
-    plot.setSheet({...format, width, height, x: (min[0] + max[0] - width) / 2, y: (min[1] + max[1] - height) / 2});
+    plot.setSheet({...format, width, height});
     get('editor-sheet-size').textContent = format.name + ' · ' + width + ' × ' + height + ' мм';
     const status = get('editor-fit-status');
-    const exceeds = size[0] > width + .0001 || size[1] > height + .0001;
+    const exceeds = min[0] < -.0001 || min[1] < -.0001 || max[0] > width + .0001 || max[1] > height + .0001;
     const uncertain = data?.approximate || data?.truncated;
     status.toggleAttribute('data-outside', exceeds || uncertain);
     if (uncertain) status.textContent = 'Предпросмотр приблизительный';
-    else if (!data?.segments.length) status.textContent = 'Лист центрируется по контуру';
+    else if (!data?.segments.length) status.textContent = 'Нижний левый угол листа · X0 Y0';
     else if (exceeds) status.textContent = 'Контур выходит за границы листа';
     else status.textContent = 'Контур помещается на листе';
   }

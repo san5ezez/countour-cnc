@@ -122,9 +122,10 @@ canvas:active { cursor: grabbing; }
 .axis output { font: 600 clamp(15px, 1.45vw, 23px) var(--mono); text-align: right; overflow: hidden; text-overflow: ellipsis; }
 .axis button { min-height: 26px; background: var(--raised); border: 1px solid var(--border); border-radius: 5px; color: #a6bbd5; font: 12px var(--mono); }
 .axis button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
-.coordinate-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 6px; }
+.coordinate-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .coordinate-actions button { font-size: 12px; padding-inline: 4px; }
 .coordinate-actions .zero-z { background: #203b5a; border-color: #365e88; color: #badbff; }
+.coordinate-actions [data-zero="XYZ"] { grid-column: 1 / -1; }
 .file-card { display: flex; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--subtle); border-radius: 7px; background: var(--field); }
 .file-icon { display: grid; place-items: center; width: 31px; height: 31px; flex: 0 0 31px; border-radius: 6px; background: #1a304c; color: #82bcff; }
 .file-card div + div { min-width: 0; }
