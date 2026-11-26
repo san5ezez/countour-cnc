@@ -548,6 +548,15 @@ class Sender:
             raise ValueError("Укажите допустимую рабочую высоту Z.")
         return {"number": number, "clearance": clearance}
 
+    def checkpoint_origin(self):
+        if self.recovery_origin is not None:
+            return self.recovery_origin
+        if self.job:
+            raise ValueError("GRBL не сообщил рабочие координаты в начале этого запуска.")
+        if self.recovery_plan:
+            return self.recovery_plan["origin"]
+        return self.position if self.idle() and coordinates(self.position) else None
+
     def perform(self, action, data):
         if action in {"connect", "upload", "load-recovery", "start", "home", "zero", "console", "jog", "jog-hold", "jog-point"}:
             if self.recovery_moving():
@@ -593,7 +602,7 @@ class Sender:
                 raise ValueError("Программа изменилась. Откройте восстановление заново.")
             checkpoint = self.checkpoint(data)
             return {"version": 1, **checkpoint, "name": self.program_name, "source": self.source,
-                    "origin": self.recovery_origin}
+                    "origin": self.checkpoint_origin()}
         elif action == "clear-log":
             self.log.clear()
         elif action == "jog-release":
@@ -623,7 +632,7 @@ class Sender:
             feed = jog_feed(data.get("feed"))
             if not coordinates(self.position) or self.spindle:
                 raise ValueError("Дождитесь рабочих координат и остановите шпиндель.")
-            origin = self.recovery_origin if self.recovery_origin is not None else self.position
+            origin = self.checkpoint_origin()
             entry = prepare_entry(self.program, number, origin)
             if clearance is None or clearance < self.position[2] or clearance <= entry.position[2] + .01:
                 raise ValueError("Укажите безопасный Z не ниже текущего Z и выше высоты выбранной команды.")

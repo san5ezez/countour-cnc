@@ -45,6 +45,7 @@ def prepare_entry(program, number, origin):
     for index, (line, command) in enumerate(program, 1):
         words = WORD.findall(command)
         g = set()
+        m = set()
         values = {}
         for letter, raw in words:
             value = float(raw)
@@ -52,11 +53,13 @@ def prepare_entry(program, number, origin):
                 raise ValueError(f"Строка {line}: недопустимое число.")
             if letter == "G" and value in SUPPORTED_G and value not in g:
                 g.add(value)
-            elif letter == "G" or letter in values or letter not in "MNXYZIJRFSPT":
+            elif letter == "M" and value in SUPPORTED_M and value not in m:
+                m.add(value)
+            elif letter in "GM" or letter in values or letter not in "NXYZIJRFSPT":
                 raise ValueError(f"Строка {line}: восстановление не поддерживает {letter}{raw}.")
             else:
                 values[letter] = value
-        if finished or ("M" in values and values["M"] not in SUPPORTED_M):
+        if finished or {2, 30} <= m:
             raise ValueError(f"Строка {line}: восстановление поддерживает программы для ручки с подъёмом по Z.")
         if len(g & MOTIONS) > 1 or {20, 21} <= g or {90, 91} <= g:
             raise ValueError(f"Строка {line}: противоречивые режимы.")
@@ -84,7 +87,7 @@ def prepare_entry(program, number, origin):
                 position[axis] = (0 if absolute else position[axis]) + values[letter] * scale
         if not coordinates(position):
             raise ValueError(f"Строка {line}: координаты выходят за пределы восстановления.")
-        finished = values.get("M") in (2, 30)
+        finished = bool(m & {2, 30})
     if number > 1 and (entry.command in {"M2", "M02", "M30"}):
         raise ValueError("Выберите команду до завершения программы.")
     return entry
