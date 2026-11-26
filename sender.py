@@ -585,16 +585,22 @@ class Sender:
 
     @staticmethod
     def checkpoint_height(data):
+        direction = data.get("z_direction", "positive")
+        if direction not in ("positive", "negative"):
+            raise ValueError("Выберите направление подъёма ручки по Z.")
         clearance = data.get("clearance")
         if clearance is not None and (type(clearance) not in (float, int) or not -1_000_000 <= clearance <= 1_000_000):
             raise ValueError("Укажите допустимую рабочую высоту Z.")
+        height = {"clearance": clearance}
+        if direction == "negative":
+            height["z_direction"] = direction
         if "lift" not in data:
-            return {"clearance": clearance}
+            return height
         lift = data.get("lift")
         if clearance is not None or (lift is not None and (
                 type(lift) not in (float, int) or not MIN_RECOVERY_LIFT <= lift <= 1_000_000)):
             raise ValueError("Введите подъём от 0,1 мм или выберите рабочую высоту Z.")
-        return {"clearance": None, "lift": lift}
+        return {**height, "lift": lift}
 
     def checkpoint_origin(self):
         if self.recovery_origin is not None:
@@ -681,27 +687,34 @@ class Sender:
             origin = self.checkpoint_origin()
             entry = prepare_entry(self.program, number, origin)
             from_z = self.position[2]
-            minimum = round_up_z(max(from_z, entry.position[2]))
-            minimum_lift = max(MIN_RECOVERY_LIFT, round_up_z(minimum - from_z))
+            direction = spec.get("z_direction", "positive")
+            sign = -1 if direction == "negative" else 1
+            # Compare along the lift direction, then convert back to work Z.
+            minimum = round_up_z(max(sign * from_z, sign * entry.position[2]))
+            minimum_lift = max(MIN_RECOVERY_LIFT, round_up_z(minimum - sign * from_z))
             lift_mode = "lift" in spec
             lift = spec.get("lift")
             if lift_mode and lift is not None:
-                clearance = round_up_z(from_z + lift)
+                clearance = sign * round_up_z(sign * from_z + lift)
             if clearance is not None and abs(clearance) > 1_000_000:
                 raise ValueError("Рассчитанная высота Z выходит за допустимый диапазон.")
-            valid = clearance is not None and clearance >= minimum and (not lift_mode or lift >= minimum_lift)
+            valid = clearance is not None and sign * clearance >= minimum and (not lift_mode or lift >= minimum_lift)
             rows = resumed_rows(self.program, number, entry, feed) if valid else None
             self.recovery_plan = {"id": uuid4().hex, "stage": "checking" if valid else "needs-clearance",
                                   "number": number, "clearance": clearance, "rows": rows,
-                                  "entry": entry, "origin": origin, "feed": feed, "minimum_clearance": minimum,
+                                  "entry": entry, "origin": origin, "feed": feed, "clearance_limit": sign * minimum,
+                                  "z_direction": direction,
                                   "lift_mode": lift_mode, "lift": lift, "from_z": from_z, "minimum_lift": minimum_lift,
                                   "offset": self.offset, "modal_ok": False, "reported_offsets": {}, "detail": ""}
             if valid:
                 self.send("$G", "recovery-check")
         elif action == "move-recovery":
             plan = self.checked_recovery(data, "planned")
-            if not coordinates(self.position) or self.position[2] > plan["clearance"] + .001 or self.spindle:
+            if not coordinates(self.position) or self.spindle:
                 raise ValueError("Проверьте положение Z и состояние шпинделя перед подводом.")
+            sign = -1 if plan["z_direction"] == "negative" else 1
+            if sign * (self.position[2] - plan["clearance"]) > .001:
+                raise ValueError("Текущий Z изменился. Рассчитайте подвод заново.")
             if plan["lift_mode"] and abs(self.position[2] - plan["from_z"]) > .001:
                 raise ValueError("Текущий Z изменился. Рассчитайте подъём заново.")
             plan["stage"] = "lifting"
@@ -840,7 +853,7 @@ class Sender:
                 "id": plan["id"], "stage": plan["stage"], "number": plan["number"],
                 "line": plan["entry"].line, "command": plan["entry"].command,
                 "entry": plan["entry"].position, "clearance": plan["clearance"], "detail": plan["detail"],
-                "minimum_clearance": plan["minimum_clearance"],
+                "clearance_limit": plan["clearance_limit"], "z_direction": plan["z_direction"],
                 "lift_mode": plan["lift_mode"], "lift": plan["lift"], "from_z": plan["from_z"],
                 "minimum_lift": plan["minimum_lift"],
                 "reported_offsets": dict(plan["reported_offsets"]),

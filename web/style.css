@@ -188,8 +188,8 @@ dialog::backdrop { background: #060b13bb; }
 .dialog-head h2 { font-size: 19px; }
 .dialog-head p { margin-top: 7px; color: var(--muted); font-size: 13px; line-height: 1.4; }
 .recovery-open { margin-top: 8px; }
-#recovery-dialog { width: min(600px, calc(100% - 24px)); }
-.recovery-fields { display: grid; grid-template-columns: 1.05fr .6fr 1.25fr 1fr; gap: 8px; }
+#recovery-dialog { width: min(750px, calc(100% - 24px)); }
+.recovery-fields { display: grid; grid-template-columns: 1.05fr .6fr 1fr 1.3fr 1fr; gap: 8px; }
 .recovery-fields label :is(input, select) { margin-top: 5px; }
 .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .recovery-files { border-top: 1px solid var(--subtle); padding-top: 12px; }
@@ -197,7 +197,7 @@ dialog::backdrop { background: #060b13bb; }
 #recovery-target { color: #c4dfff; overflow-wrap: anywhere; }
 #recovery-status.error { color: #ffa1ac; }
 #recovery-confirm-origin { margin-top: 9px; line-height: 1.5; }
-@media (max-width: 510px) {
+@media (max-width: 650px) {
   .recovery-fields { grid-template-columns: 1fr 1fr; }
 }
 .setting-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 12px; }

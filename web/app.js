@@ -338,6 +338,7 @@ function recoverySpec() {
   return {
     revision: file?.revision, kind: get('recovery-kind').value,
     number: get('recovery-number').valueAsNumber,
+    z_direction: get('recovery-z-direction').value,
     ...(mode === 'lift' ? {lift: height} : {clearance: height}),
   };
 }
@@ -351,6 +352,7 @@ function setRecoveryHeight(mode, value) {
 }
 
 function restoreRecoveryHeight(checkpoint) {
+  get('recovery-z-direction').value = checkpoint?.z_direction ?? 'positive';
   if (!checkpoint || Object.hasOwn(checkpoint, 'lift')) setRecoveryHeight('lift', checkpoint?.lift);
   else setRecoveryHeight('absolute', checkpoint.clearance);
 }
@@ -379,7 +381,7 @@ function renderRecovery() {
   const matching = recoveryDraft?.revision === file?.revision && plan &&
     spec.number === (spec.kind === 'line' ? plan.line : plan.number);
   const preview = matching ? plan : null;
-  const current = preview && liftMode === preview.lift_mode &&
+  const current = preview && spec.z_direction === preview.z_direction && liftMode === preview.lift_mode &&
     (liftMode ? spec.lift === preview.lift : spec.clearance === preview.clearance) ? preview : null;
   const moving = ['lifting', 'travelling'].includes(plan?.stage);
   const inProgress = moving || current?.stage === 'checking';
@@ -388,7 +390,7 @@ function renderRecovery() {
   const detail = recoveryError || current?.detail;
   const hint = {
     'needs-clearance': liftMode ? 'Введите величину подъёма, при которой ручка свободно проходит над листом.' :
-      'Укажите высоту не ниже расчётного минимума. На этой высоте ручка должна проходить над листом.',
+      'Укажите рабочий Z с учётом расчётной границы. На этой высоте ручка должна проходить над листом.',
     checking: 'Проверка режимов и рабочих смещений GRBL…',
     planned: 'Проверьте цель и подтвердите подвод.',
     lifting: 'Подъём ручки до безопасной высоты…',
@@ -418,9 +420,10 @@ function renderRecovery() {
   const heightDetails = 'Текущий Z ' + heightText + (preview ?
     ' · Z в начале команды ' + heightNumber.format(preview.entry[2]) + ' мм' : '') +
     (current?.stage === 'needs-clearance' ? (liftMode ? ' · минимальный подъём ' +
-      heightNumber.format(current.minimum_lift) : ' · минимальный Z ' +
-      heightNumber.format(current.minimum_clearance)) + ' мм' : '') +
-    (current?.lift_mode && current.clearance != null && current.stage !== 'needs-clearance' ?
+      heightNumber.format(current.minimum_lift) :
+      (current.z_direction === 'negative' ? ' · Z не выше ' : ' · Z не ниже ') +
+      heightNumber.format(current.clearance_limit)) + ' мм' : '') +
+    (current?.clearance != null && current.stage !== 'needs-clearance' ?
       ' · Z переезда ' + heightNumber.format(current.clearance) + ' мм' : '');
   if (heights.textContent !== heightDetails) heights.textContent = heightDetails;
   const offsets = get('recovery-offsets-report');
@@ -431,9 +434,9 @@ function renderRecovery() {
     const text = 'Смещения GRBL · G92 ' + value('G92') + ' · TLO ' + value('TLO');
     if (offsets.textContent !== text) offsets.textContent = text;
   }
-  useMinimum.hidden = liftMode || preview?.stage !== 'needs-clearance';
+  useMinimum.hidden = liftMode || spec.z_direction === 'negative' || current?.stage !== 'needs-clearance';
   useMinimum.disabled = busy || failed || !machine?.ready;
-  for (const id of ['recovery-kind', 'recovery-number', 'recovery-height-mode', 'recovery-clearance']) {
+  for (const id of ['recovery-kind', 'recovery-number', 'recovery-z-direction', 'recovery-height-mode', 'recovery-clearance']) {
     get(id).disabled = Boolean(inProgress || busy);
   }
   get('recovery-prepare').disabled = !machine?.ready || busy || failed || Boolean(inProgress);
@@ -476,8 +479,14 @@ function bindRecovery() {
     get('recovery-origin').checked = false;
     renderRecovery();
   });
+  get('recovery-z-direction').addEventListener('change', () => {
+    recoveryDraft = null;
+    recoveryError = '';
+    get('recovery-origin').checked = false;
+    renderRecovery();
+  });
   get('recovery-use-minimum').addEventListener('click', () => {
-    get('recovery-clearance').value = machine.recovery.minimum_clearance;
+    get('recovery-clearance').value = machine.recovery.clearance_limit;
     get('recovery-clearance').dispatchEvent(new Event('input'));
   });
   get('recovery-origin').addEventListener('change', renderRecovery);
@@ -528,10 +537,10 @@ function bindRecovery() {
     try {
       if (selected.size > 12_004_096) throw new Error('Файл состояния слишком большой.');
       const saved = JSON.parse(await selected.text());
-      const {version, name, source, number, origin, clearance, lift} = saved;
+      const {version, name, source, number, origin, clearance, lift, z_direction} = saved;
       const height = Object.hasOwn(saved, 'lift') ? {clearance, lift} : {clearance};
       recoveryError = '';
-      if (await action('load-recovery', {version, name, source, number, origin, ...height})) {
+      if (await action('load-recovery', {version, name, source, number, origin, z_direction, ...height})) {
         recoveryDraft = null;
         get('recovery-kind').value = 'command';
         get('recovery-number').value = file.checkpoint.number;
