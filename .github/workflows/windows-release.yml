@@ -1,0 +1,95 @@
+name: Publish Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag and draft release, such as v0.2.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw 'Use a version tag such as v0.2.0.'
+          }
+
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.11'
+          cache: false
+
+      - name: Build portable EXE
+        shell: pwsh
+        run: python packaging/windows/build.py dist/Contour-CNC-x64.exe
+
+      - name: Verify Windows startup and editor
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path 'dist/Contour-CNC-x64.exe').Path
+          foreach ($editor in @($false, $true)) {
+            $port = if ($editor) { 18766 } else { 18765 }
+            $arguments = @('--no-browser', '--port', "$port")
+            if ($editor) { $arguments += '--test' }
+            $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru -NoNewWindow
+            $base = "http://127.0.0.1:$port"
+            try {
+              $features = $null
+              for ($attempt = 0; $attempt -lt 30; $attempt++) {
+                if ($process.HasExited) { throw "The EXE exited with code $($process.ExitCode)." }
+                try {
+                  $features = Invoke-RestMethod "$base/api/features" -TimeoutSec 2
+                  break
+                } catch {
+                  Start-Sleep -Seconds 1
+                }
+              }
+              if ($null -eq $features -or $features.editor -ne $editor) {
+                throw "Unexpected editor setting with arguments $arguments."
+              }
+              if (!(Invoke-RestMethod "$base/api/ports").serialAvailable) {
+                throw 'The bundled Windows serial library did not load.'
+              }
+              if ((Invoke-RestMethod "$base/api/file").name -ne 'rosette.nc') {
+                throw 'The example G-code is missing.'
+              }
+              if ($editor) {
+                $payload = @{ source = "G21 G90`nG1 X10 Z-1 F200"; factor = 2 } | ConvertTo-Json
+                $result = Invoke-RestMethod "$base/api/scale" -Method Post -ContentType 'application/json' -Headers @{'X-CNC-Panel' = 'local'} -Body $payload
+                if ($result.source -notmatch 'X20 Z-1 F200') { throw 'XY scaling failed.' }
+              }
+            } finally {
+              if (!$process.HasExited) { taskkill /T /F /PID $process.Id | Out-Null }
+            }
+          }
+
+      - name: Upload and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $draft = gh release view "$env:RELEASE_TAG" --json isDraft --jq '.isDraft'
+          if ($LASTEXITCODE -ne 0 -or $draft -ne 'true') { throw 'An existing draft release is required.' }
+          $digest = (Get-FileHash 'dist/Contour-CNC-x64.exe').Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$digest  Contour-CNC-x64.exe`n")
+          gh release upload "$env:RELEASE_TAG" dist/Contour-CNC-x64.exe dist/SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw 'The release assets could not be uploaded.' }
+          gh release edit "$env:RELEASE_TAG" --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'The draft release could not be published.' }
