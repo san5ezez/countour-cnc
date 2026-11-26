@@ -7,7 +7,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from program_edit import scale_xy
+from program_edit import scale_xy, transform_xy
 from sender import MAX_PROGRAM_BYTES, Sender, parse_program, serial_ports
 
 ROOT = Path(__file__).resolve().parent
@@ -69,7 +69,7 @@ class LocalHandler(BaseHTTPRequestHandler):
         if not self.allowed() or self.headers.get("X-CNC-Panel") != "local":
             self.send_error(403)
             return
-        edit = self.server.test_mode and self.path in ("/api/validate", "/api/scale")
+        edit = self.server.test_mode and self.path in ("/api/validate", "/api/scale", "/api/transform")
         if self.path != "/api/action" and not edit:
             self.send_error(404)
             return
@@ -85,6 +85,11 @@ class LocalHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/scale":
                 source = scale_xy(data.get("source"), data.get("factor"))
                 result = {"source": source, "lines": len(parse_program(source))}
+            elif self.path == "/api/transform":
+                source, selected, rows = transform_xy(data.get("source"), data.get("factor"), data.get("angle"),
+                                                data.get("dx"), data.get("dy"), data.get("pivot"),
+                                                data.get("selection"), data.get("selectedLines"))
+                result = {"source": source, "selectedLines": selected, "selectedRows": rows}
             else:
                 result = self.server.sender.command(data.get("action"), data)
         except (ValueError, OSError) as error:

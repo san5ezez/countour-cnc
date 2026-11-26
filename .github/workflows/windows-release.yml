@@ -73,6 +73,16 @@ jobs:
                 $payload = @{ source = "G21 G90`nG1 X10 Z-1 F200"; factor = 2 } | ConvertTo-Json
                 $result = Invoke-RestMethod "$base/api/scale" -Method Post -ContentType 'application/json' -Headers @{'X-CNC-Panel' = 'local'} -Body $payload
                 if ($result.source -notmatch 'X20 Z-1 F200') { throw 'XY scaling failed.' }
+                $transform = @{
+                  source = "G21 G90`nG0 X1 Y2`nG1 X3 Y2 F200`nM30"
+                  factor = 1
+                  angle = 90
+                  dx = 5
+                  dy = 0
+                  pivot = @(0, 0)
+                } | ConvertTo-Json
+                $result = Invoke-RestMethod "$base/api/transform" -Method Post -ContentType 'application/json' -Headers @{'X-CNC-Panel' = 'local'} -Body $transform
+                if ($result.source -notmatch 'X3 Y3 F200') { throw 'XY rotation failed.' }
               }
             } finally {
               if (!$process.HasExited) { taskkill /T /F /PID $process.Id | Out-Null }
@@ -89,7 +99,9 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $draft -ne 'true') { throw 'An existing draft release is required.' }
           $digest = (Get-FileHash 'dist/Contour-CNC-x64.exe').Hash.ToLowerInvariant()
           [IO.File]::WriteAllText((Join-Path $PWD 'dist/SHA256SUMS.txt'), "$digest  Contour-CNC-x64.exe`n")
-          gh release upload "$env:RELEASE_TAG" dist/Contour-CNC-x64.exe dist/SHA256SUMS.txt
+          $versioned = 'dist/Contour-CNC-' + $env:RELEASE_TAG.Substring(1) + '-x64.exe'
+          Copy-Item 'dist/Contour-CNC-x64.exe' $versioned
+          gh release upload "$env:RELEASE_TAG" dist/Contour-CNC-x64.exe $versioned dist/SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw 'The release assets could not be uploaded.' }
           gh release edit "$env:RELEASE_TAG" --draft=false --latest
           if ($LASTEXITCODE -ne 0) { throw 'The draft release could not be published.' }

@@ -30,7 +30,7 @@ try {
   // The interface also runs when browser storage is unavailable.
 }
 
-const plot = new Plot(get('plot'));
+const plot = new Plot(get('plot'), get('plot-marker'));
 const jobControls = ['start', 'pause', 'stop'];
 let currentStep = prefs.step;
 let coordinate = 'position';
@@ -144,6 +144,7 @@ function updateControls() {
   get('point-mode').disabled = !pointMode && (!ready || plot.view !== 'xy' || !machine?.position);
   get('recovery-open').disabled = !file;
   for (const button of all('[data-zero]')) button.disabled = !ready || coordinate !== 'position';
+  get('return-zero').disabled = !ready || !machine?.position;
   updateFeedOverride(job, locked);
   renderRecovery();
 }
@@ -231,7 +232,8 @@ function render() {
   renderCoordinates();
   setSpeed('actual-feed', failed ? 0 : machine?.feed || 0, 'мм/мин');
   setSpeed('actual-spindle', failed ? 0 : machine?.spindle || 0, 'об/мин');
-  plot.setPosition(failed ? null : machine?.position || null, machine?.job?.status === 'running');
+  plot.setPosition(failed ? null : machine?.position || null, machine?.job?.status === 'running',
+    ['Run', 'Jog', 'Home'].includes(machine?.state));
   if (machine) renderLog(machine.log);
   const job = machine?.job;
   plot.setJobProgress(file?.revision === machine?.revision ? job : null);
@@ -639,6 +641,13 @@ function bindButtons() {
       () => action('reset'));
   });
   all('[data-zero]').forEach(button => button.addEventListener('click', () => action('zero', {axes: button.dataset.zero})));
+  get('return-zero').addEventListener('click', () => {
+    const feed = jogFeed();
+    if (feed === undefined) return;
+    handleHardware('Вернуться к X0 Y0', 'Инструмент поедет к рабочему нулю XY на текущей высоте Z.', () => {
+      action('jog-point', {x: 0, y: 0, feed});
+    });
+  });
   all('[data-coordinate]').forEach(button => button.addEventListener('click', () => {
     coordinate = button.dataset.coordinate;
     renderCoordinates();

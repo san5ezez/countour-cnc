@@ -112,6 +112,9 @@ canvas:active { cursor: grabbing; }
 .point-controls button { font-size: 12px; min-height: 31px; }
 #point-status { color: var(--muted); font-size: 12px; }
 #plot.point-mode { cursor: crosshair; }
+.plot-marker { position: absolute; inset: 0; pointer-events: none; }
+#editor-plot[data-tool="select"] { cursor: crosshair; }
+#editor-plot[data-tool="move"] { cursor: move; }
 .legend { display: flex; flex-wrap: wrap; gap: 7px 14px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .legend i { width: 13px; height: 2px; background: #5ba8ff; }
@@ -135,6 +138,7 @@ canvas:active { cursor: grabbing; }
 .coordinate-actions button { font-size: 12px; padding-inline: 4px; }
 .coordinate-actions .zero-z { background: #203b5a; border-color: #365e88; color: #badbff; }
 .coordinate-actions [data-zero="XYZ"] { grid-column: 1 / -1; }
+.coordinate-actions #return-zero { grid-column: 1 / -1; }
 .file-card { display: flex; align-items: center; gap: 9px; padding: 9px; border: 1px solid var(--subtle); border-radius: 7px; background: var(--field); }
 .file-icon { display: grid; place-items: center; width: 31px; height: 31px; flex: 0 0 31px; border-radius: 6px; background: #1a304c; color: #82bcff; }
 .file-card div + div { min-width: 0; }
@@ -251,10 +255,16 @@ dialog::backdrop { background: #060b13bb; }
 #editor-code:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 #editor-fit-status[data-outside] { color: #f4c987; }
 .editor-plot { height: clamp(290px, 42vh, 520px); }
+.editor-tools { display: flex; flex-wrap: wrap; gap: 6px; padding: 9px 13px 0; }
+.editor-tools button { font-size: 12px; }
+.editor-tools > button { min-height: 29px; }
 .editor-controls { padding: 15px; }
 .editor-controls .panel-heading { margin-bottom: 4px; }
 .editor-controls form, .editor-sheet { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 9px; }
 .editor-sheet { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+.editor-controls form.editor-transform { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 12px; }
+.editor-transform button { grid-column: 1 / -1; justify-self: start; }
+#editor-selection { color: var(--muted); margin: 9px 0 0; font-size: 12px; }
 .editor-controls label { margin: 0; }
 .editor-controls label :is(input, select) { margin-top: 5px; }
 .editor-controls details { border-top: 1px solid var(--subtle); margin-top: 14px; padding-top: 12px; }
@@ -279,4 +289,5 @@ dialog::backdrop { background: #060b13bb; }
   #editor-nav small { display: none; }
   .editor-controls form { grid-template-columns: 1fr 1fr; }
   .editor-controls form button { grid-column: 1 / -1; }
+  .editor-controls form.editor-transform { grid-template-columns: 1fr 1fr; }
 }

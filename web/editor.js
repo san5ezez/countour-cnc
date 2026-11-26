@@ -26,6 +26,19 @@ function fieldSize(value) {
   return Number(value.toFixed(6)).toString();
 }
 
+function inside(point, area) {
+  return point[0] >= area[0] - .00001 && point[0] <= area[2] + .00001 &&
+    point[1] >= area[1] - .00001 && point[1] <= area[3] + .00001;
+}
+
+function rectangle(a, b) {
+  return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+}
+
+function shiftBox(area, x, y) {
+  return [area[0] + x, area[1] + y, area[2] + x, area[3] + y];
+}
+
 function outputName(name) {
   return name.replace(/\.[^.]+$/, '') + '-edited.nc';
 }
@@ -45,6 +58,13 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
   let busy = false;
   let timer;
   let reference = 0;
+  let tool = 'pan';
+  let drag = null;
+  let selection = null;
+  let selectedLines = null;
+  let selectedRows = null;
+  let selectedBounds = null;
+  let undo = null;
 
   function message(text, error = false) {
     feedback.textContent = text;
@@ -52,13 +72,22 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
     feedback.classList.toggle('error', error);
   }
 
-  function setSheet() {
-    const format = formats[get('editor-sheet').value];
-    const landscape = get('editor-orientation').value === 'landscape';
+  function setSheet(fit = true) {
+    const chosen = get('editor-sheet').value;
+    const custom = chosen === 'custom';
+    const paper = [get('editor-paper-width'), get('editor-paper-height')];
+    get('editor-sheet-custom').hidden = !custom;
+    get('editor-orientation').disabled = custom;
+    if (custom && paper.some(input => !input.checkValidity() || !Number.isFinite(input.valueAsNumber))) {
+      get('editor-fit-status').textContent = 'Введите ширину и высоту листа в миллиметрах';
+      return;
+    }
+    const format = custom ? {width: paper[0].valueAsNumber, height: paper[1].valueAsNumber, grid: 5, name: 'Свой лист'} : formats[chosen];
+    const landscape = !custom && get('editor-orientation').value === 'landscape';
     const width = landscape ? format.height : format.width;
     const height = landscape ? format.width : format.height;
     const [min, max] = bounds;
-    plot.setSheet({...format, width, height});
+    plot.setSheet({...format, width, height}, fit);
     get('editor-sheet-size').textContent = format.name + ' · ' + width + ' × ' + height + ' мм';
     const status = get('editor-fit-status');
     const exceeds = min[0] < -.0001 || min[1] < -.0001 || max[0] > width + .0001 || max[1] > height + .0001;
@@ -70,21 +99,46 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
     else status.textContent = 'Контур помещается на листе';
   }
 
-  function paint() {
-    clearTimeout(timer);
-    timer = null;
-    data = plot.set(code.value);
-    bounds = outlineBounds(data);
-    size = bounds[1].map((value, axis) => value - bounds[0][axis]);
+  function updateSelection() {
+    const parts = selection ? data.segments.filter(segment => !segment.rapid &&
+      (selectedRows ? selectedRows.has(segment.line) : inside(segment.from, selection) && inside(segment.to, selection))) : [];
+    selectedBounds = parts.length ? outlineBounds({segments: parts}) : null;
+    if (selectedRows && selectedBounds) {
+      const [min, max] = selectedBounds;
+      selection = [min[0], min[1], max[0], max[1]];
+    }
+    plot.setSelection(selection);
+    const active = selectedBounds || bounds;
+    size = active[1].map((value, axis) => value - active[0][axis]);
+    if (selection && !selectedBounds) size = [0, 0, 0];
+    const guide = tool === 'select' ? 'Протяните рамку вокруг текста, оставьте метки снаружи.' :
+      tool === 'move' ? 'Перетащите контур мышью. Вне выделения метки остаются на своих местах.' :
+      selection ? 'Изменения применяются к штрихам внутри рамки.' :
+      'Весь контур. Чтобы оставить угловые метки на месте, обведите рамкой только текст.';
+    get('editor-selection').textContent = guide;
+    get('editor-clear-selection').disabled = !selection;
+    get('editor-undo').disabled = !undo;
+    get('editor-size').textContent = (selection ? 'Выделено' : 'Контур') + ' · X ' + number.format(size[0]) + ' · Y ' + number.format(size[1]) + ' мм';
+    updateSizeFields();
+  }
+
+  function updateSizeFields() {
     if (!size[reference]) reference = size[0] ? 0 : 1;
     for (const [index, field] of controls.entries()) {
       field.value = size[index] >= .001 ? fieldSize(size[index]) : '';
       field.disabled = size[index] < .001;
     }
-    get('editor-size').textContent = 'Контур · X ' + number.format(size[0]) + ' · Y ' + number.format(size[1]) + ' мм';
-    get('editor-lines').textContent = number.format(code.value ? code.value.trimEnd().split('\n').length : 0) + ' строк';
     get('editor-resize').querySelector('button').disabled = !size.slice(0, 2).some(value => value >= .001);
-    setSheet();
+  }
+
+  function paint(fit = false) {
+    clearTimeout(timer);
+    timer = null;
+    data = plot.set(code.value, fit);
+    bounds = outlineBounds(data);
+    updateSelection();
+    get('editor-lines').textContent = number.format(code.value ? code.value.trimEnd().split('\n').length : 0) + ' строк';
+    setSheet(fit);
   }
 
   function load({name, source}) {
@@ -93,8 +147,9 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
     get('editor-filename').title = name;
     code.value = source;
     dirty = false;
+    selection = selectedLines = selectedRows = undo = null;
     message('');
-    paint();
+    paint(true);
   }
 
   async function useCurrent() {
@@ -130,11 +185,13 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
   }
 
   async function resize(factor) {
+    if (selection) return transform(factor, 0, 0, 0);
     await run(async source => {
       if (timer) paint();
       if (data?.approximate || data?.truncated) throw new Error('Для масштабирования нужен полный и точный предпросмотр траектории.');
       if (!size.slice(0, 2).some(value => value >= .001)) throw new Error('В файле нет траектории по XY для масштабирования.');
       const result = await request('/api/scale', {source, factor});
+      undo = {source, selection, selectedLines, selectedRows, dirty};
       code.value = result.source;
       dirty = true;
       paint();
@@ -142,8 +199,72 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
     });
   }
 
+  async function transform(factor, angle, dx, dy) {
+    await run(async source => {
+      if (timer) paint();
+      if (data?.approximate || data?.truncated) throw new Error('Для преобразования нужен полный предпросмотр траектории.');
+      if (selection && !selectedBounds) throw new Error('Выделите область, содержащую текст.');
+      if (!data?.segments.length) throw new Error('В файле нет траектории для преобразования.');
+      const [min, max] = selectedBounds || bounds;
+      const pivot = [0, 1].map(axis => (min[axis] + max[axis]) / 2);
+      const result = await request('/api/transform', {
+        source, factor, angle, dx, dy, pivot, selection: selectedLines ? null : selection, selectedLines,
+      });
+      undo = {source, selection, selectedLines, selectedRows, dirty};
+      code.value = result.source;
+      selectedLines = result.selectedLines.length ? result.selectedLines : null;
+      selectedRows = result.selectedRows.length ? new Set(result.selectedRows) : null;
+      dirty = true;
+      for (const id of ['editor-dx', 'editor-dy', 'editor-angle']) get(id).value = 0;
+      get('editor-scale').value = 100;
+      paint();
+      message(selection ? 'Выделенные штрихи изменены.' : 'Контур изменён.');
+    });
+  }
+
+  function setTool(next) {
+    tool = next;
+    drag = null;
+    get('editor-plot').dataset.tool = tool;
+    for (const button of document.querySelectorAll('[data-editor-tool]')) {
+      button.classList.toggle('active', button.dataset.editorTool === tool);
+      button.setAttribute('aria-pressed', button.dataset.editorTool === tool);
+    }
+    plot.onGesture = next === 'pan' ? null : (phase, point) => {
+      if (busy || !data) return;
+      if (phase === 'start') {
+        if (tool === 'move' && selection && !inside(point, selection)) return;
+        drag = point;
+        return;
+      }
+      if (!drag) return;
+      if (phase === 'cancel') {
+        drag = null;
+        plot.setSelection(selection);
+        return;
+      }
+      const delta = [point[0] - drag[0], point[1] - drag[1]];
+      const frame = rectangle(drag, point);
+      const area = selection || [bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]];
+      plot.setSelection(tool === 'select' ? frame : shiftBox(area, ...delta));
+      if (phase === 'finish') {
+        drag = null;
+        if (tool === 'select' && frame[2] - frame[0] > .01 && frame[3] - frame[1] > .01) {
+          selection = frame;
+          selectedLines = selectedRows = null;
+          setTool('pan');
+        } else {
+          plot.setSelection(selection);
+          if (tool === 'move' && Math.hypot(...delta) > .01) transform(1, 0, ...delta);
+        }
+      }
+    };
+    if (data) updateSelection();
+  }
+
   code.addEventListener('input', () => {
     dirty = true;
+    selection = selectedLines = selectedRows = undo = null;
     message('');
     clearTimeout(timer);
     timer = setTimeout(paint, 180);
@@ -170,8 +291,30 @@ export function createEditor({getFile, request, upload, showWorkspace}) {
     event.preventDefault();
     resize(get('editor-target').valueAsNumber / get('editor-measured').valueAsNumber);
   });
-  get('editor-sheet').addEventListener('change', setSheet);
-  get('editor-orientation').addEventListener('change', setSheet);
+  get('editor-sheet').addEventListener('change', () => setSheet());
+  get('editor-orientation').addEventListener('change', () => setSheet());
+  for (const id of ['editor-paper-width', 'editor-paper-height']) get(id).addEventListener('input', () => setSheet());
+  for (const button of document.querySelectorAll('[data-editor-tool]')) {
+    button.addEventListener('click', () => { if (!busy) setTool(button.dataset.editorTool); });
+  }
+  get('editor-clear-selection').addEventListener('click', () => {
+    if (busy) return;
+    selection = selectedLines = selectedRows = null;
+    setTool('pan');
+  });
+  get('editor-transform').addEventListener('submit', event => {
+    event.preventDefault();
+    transform(get('editor-scale').valueAsNumber / 100, get('editor-angle').valueAsNumber,
+      get('editor-dx').valueAsNumber, get('editor-dy').valueAsNumber);
+  });
+  get('editor-undo').addEventListener('click', () => {
+    if (!undo || busy) return;
+    ({selection, selectedLines, selectedRows, dirty} = undo);
+    code.value = undo.source;
+    undo = null;
+    paint();
+    message('Предыдущая правка отменена.');
+  });
   get('editor-fit').addEventListener('click', () => plot.fit());
   get('editor-current').addEventListener('click', () => { if (!busy && mayReplace()) useCurrent(); });
   get('editor-open').addEventListener('click', () => { if (!busy) get('editor-picker').click(); });

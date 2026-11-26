@@ -154,9 +154,11 @@ function gridInterval(span) {
 const axisNumber = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 6, useGrouping: false});
 
 export class Plot {
-  constructor(canvas) {
+  constructor(canvas, markerCanvas = null) {
     this.canvas = canvas;
     this.context = canvas.getContext('2d');
+    this.markerCanvas = markerCanvas;
+    this.markerFrame = null;
     this.data = parsePath('');
     this.position = null;
     this.view = 'iso';
@@ -171,12 +173,24 @@ export class Plot {
       this.zoom(Math.exp(-event.deltaY * .0015), event.offsetX, event.offsetY);
     }, {passive: false});
     canvas.addEventListener('pointerdown', event => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || !event.isPrimary) return;
       canvas.setPointerCapture(event.pointerId);
+      if (this.onGesture && this.screenToXY) {
+        const rect = canvas.getBoundingClientRect();
+        const projectPoint = this.screenToXY;
+        const point = event => projectPoint(event.clientX - rect.left, event.clientY - rect.top);
+        this.editPointer = {id: event.pointerId, point, handler: this.onGesture};
+        this.editPointer.handler('start', point(event));
+        return;
+      }
       this.drag = [event.clientX, event.clientY, this.panX, this.panY];
       this.dragged = false;
     });
     canvas.addEventListener('pointermove', event => {
+      if (this.editPointer?.id === event.pointerId) {
+        this.editPointer.handler('move', this.editPointer.point(event));
+        return;
+      }
       if (!this.drag) return;
       if (Math.hypot(event.clientX - this.drag[0], event.clientY - this.drag[1]) > 5) this.dragged = true;
       if (this.onPick && !this.dragged) return;
@@ -185,6 +199,12 @@ export class Plot {
       this.schedule();
     });
     canvas.addEventListener('pointerup', event => {
+      if (this.editPointer?.id === event.pointerId) {
+        const pointer = this.editPointer;
+        this.editPointer = null;
+        pointer.handler('finish', pointer.point(event));
+        return;
+      }
       if (!this.onPick || !this.drag || this.dragged || !this.screenToXY ||
           Math.hypot(event.clientX - this.drag[0], event.clientY - this.drag[1]) > 5) return;
       const rect = canvas.getBoundingClientRect();
@@ -192,7 +212,14 @@ export class Plot {
       const y = event.clientY - rect.top;
       if (x >= 0 && y >= 0 && x <= rect.width && y <= rect.height) this.onPick(this.screenToXY(x, y));
     });
-    canvas.addEventListener('lostpointercapture', () => { this.drag = null; });
+    canvas.addEventListener('lostpointercapture', event => {
+      this.drag = null;
+      if (this.editPointer?.id === event.pointerId) {
+        const pointer = this.editPointer;
+        this.editPointer = null;
+        pointer.handler('cancel');
+      }
+    });
     canvas.addEventListener('dblclick', () => this.fit());
   }
 
@@ -204,14 +231,15 @@ export class Plot {
     });
   }
 
-  set(source) {
+  set(source, fit = true) {
     this.source = source;
     this.data = parsePath(source);
     this.tracedJob = undefined;
     this.tracedData = null;
     this.traceCursor = 0;
     this.traceSample = 0;
-    this.fit();
+    if (fit) this.fit();
+    else this.schedule();
     return this.data;
   }
 
@@ -222,10 +250,35 @@ export class Plot {
     }
   }
 
-  setPosition(position, drawing) {
-    if (position?.join(',') === this.position?.join(',') && drawing === this.drawing) return;
+  setPosition(position, drawing, animate) {
+    if (position?.join(',') === this.position?.join(',') && drawing === this.drawing && animate === this.animatePosition) return;
+    const now = performance.now();
+    const displayed = this.markerAt(now);
+    const duration = Math.min(220, Math.max(80, now - (this.markerUpdate ?? now)));
+    this.markerMotion = animate && displayed && position ? {from: displayed, start: now, duration} : null;
+    this.markerUpdate = now;
     this.position = position;
     this.drawing = drawing;
+    this.animatePosition = animate;
+    this.scheduleMarker();
+  }
+
+  markerAt(now) {
+    if (!this.markerMotion || !this.position) return this.position;
+    const {from, start, duration} = this.markerMotion;
+    return interpolate(from, this.position, Math.min(1, (now - start) / duration));
+  }
+
+  scheduleMarker() {
+    if (!this.markerCanvas || this.markerFrame !== null) return;
+    this.markerFrame = requestAnimationFrame(now => {
+      this.markerFrame = null;
+      this.drawMarker(now);
+    });
+  }
+
+  setSelection(rectangle) {
+    this.selection = rectangle;
     this.schedule();
   }
 
@@ -262,9 +315,10 @@ export class Plot {
     }
   }
 
-  setSheet(sheet) {
+  setSheet(sheet, fit = true) {
     this.sheet = sheet;
-    this.fit();
+    if (fit) this.fit();
+    else this.schedule();
   }
 
   trackedLine() {
@@ -438,12 +492,40 @@ export class Plot {
       ctx.strokeStyle = '#70e4bd';
       ctx.stroke();
     }
-    const marker = this.position;
+    if (xy && this.selection) {
+      const [left, top] = toCanvas([this.selection[0], this.selection[3], 0]);
+      const [right, bottom] = toCanvas([this.selection[2], this.selection[1], 0]);
+      ctx.fillStyle = '#3c91ef22';
+      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = '#64b5ff';
+      ctx.lineWidth = 1.4;
+      ctx.strokeRect(left, top, right - left, bottom - top);
+      ctx.setLineDash([]);
+    }
+    this.markerProjection = {toCanvas, minZ: Math.min(0, min[2]), view, pixelRatio, width, height};
+    this.scheduleMarker();
+    if (!xy) this.drawAxes(ctx, width, height);
+  }
+
+  drawMarker(now) {
+    const canvas = this.markerCanvas;
+    if (!canvas || !this.markerProjection) return;
+    const {toCanvas, minZ, view, pixelRatio, width, height} = this.markerProjection;
+    const bitmapWidth = Math.round(width * pixelRatio);
+    const bitmapHeight = Math.round(height * pixelRatio);
+    if (canvas.width !== bitmapWidth) canvas.width = bitmapWidth;
+    if (canvas.height !== bitmapHeight) canvas.height = bitmapHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const marker = this.markerAt(now);
     if (marker?.length >= 3) {
       const [x, y] = toCanvas(marker);
       if (view === 'iso' && marker[2]) {
         ctx.beginPath();
-        trace([marker[0], marker[1], Math.min(0, min[2])], marker);
+        ctx.moveTo(...toCanvas([marker[0], marker[1], minZ]));
+        ctx.lineTo(x, y);
         ctx.strokeStyle = '#edb36585';
         ctx.lineWidth = 1;
         ctx.stroke();
@@ -457,7 +539,8 @@ export class Plot {
       ctx.fillStyle = '#ffc577';
       ctx.fill();
     }
-    if (!xy) this.drawAxes(ctx, width, height);
+    if (this.markerMotion && now < this.markerMotion.start + this.markerMotion.duration) this.scheduleMarker();
+    else this.markerMotion = null;
   }
 
   drawXYAxes(ctx, width, height, [x, y], scale, interval) {

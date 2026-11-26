@@ -70,6 +70,7 @@
           </div>
           <div id="plot-area" class="plot-area">
             <canvas id="plot" aria-label="График траектории инструмента"></canvas>
+            <canvas id="plot-marker" class="plot-marker" aria-hidden="true"></canvas>
             <span id="plot-mode" class="canvas-chip">ВИД СВЕРХУ · XY</span>
             <div class="plot-tools" aria-label="Масштаб">
               <button id="zoom-in" class="icon-button" type="button" aria-label="Приблизить" title="Приблизить"><svg><use href="/icons.svg#plus"></use></svg></button>
@@ -108,6 +109,7 @@
             <button class="secondary" data-zero="XY" type="button" title="Установить рабочий ноль по осям X и Y">Обнулить XY</button>
             <button class="secondary zero-z" data-zero="Z" type="button" title="Установить рабочий ноль по оси Z">Обнулить Z</button>
             <button class="secondary" data-zero="XYZ" type="button">Обнулить XYZ</button>
+            <button id="return-zero" class="secondary" type="button">Вернуться к X0 Y0</button>
           </div>
         </section>
         <section class="panel program">
@@ -153,6 +155,15 @@
           <section class="panel">
             <div class="visual-head"><div><h2>Лист и траектория</h2><p id="editor-fit-status">—</p></div><button id="editor-fit" class="icon-button" type="button" aria-label="Вместить лист и траекторию" title="Вместить лист и траекторию"><svg><use href="/icons.svg#fit"></use></svg></button></div>
             <div class="plot-area editor-plot"><canvas id="editor-plot" aria-label="Траектория на листе сверху"></canvas></div>
+            <div class="editor-tools">
+              <div class="segmented" aria-label="Управление листом">
+                <button type="button" data-editor-tool="pan" class="active" aria-pressed="true">Вид</button>
+                <button type="button" data-editor-tool="select" aria-pressed="false">Выделить текст</button>
+                <button type="button" data-editor-tool="move" aria-pressed="false">Перетащить</button>
+              </div>
+              <button id="editor-clear-selection" class="secondary" type="button" disabled>Весь контур</button>
+              <button id="editor-undo" class="secondary" type="button" disabled>Отменить правку</button>
+            </div>
             <div class="visual-foot"><span id="editor-size" class="plot-size">—</span><span id="editor-sheet-size" class="plot-size">—</span></div>
           </section>
           <section class="panel editor-controls">
@@ -163,9 +174,21 @@
               <button class="secondary" type="submit">Изменить размер</button>
             </form>
             <div class="editor-sheet">
-              <label>Формат листа<select id="editor-sheet"><option value="notebook">Тетрадный · 165 × 205 мм</option><option value="a4" selected>A4 · 210 × 297 мм</option></select></label>
+              <label>Формат листа<select id="editor-sheet"><option value="notebook">Тетрадный · 165 × 205 мм</option><option value="a4" selected>A4 · 210 × 297 мм</option><option value="custom">Свой размер</option></select></label>
               <label>Ориентация<select id="editor-orientation"><option value="portrait">Книжная</option><option value="landscape">Альбомная</option></select></label>
             </div>
+            <div id="editor-sheet-custom" class="editor-sheet" hidden>
+              <label>Ширина листа, мм<input id="editor-paper-width" type="number" min="1" max="2000" step="any" value="165"></label>
+              <label>Высота листа, мм<input id="editor-paper-height" type="number" min="1" max="2000" step="any" value="205"></label>
+            </div>
+            <form id="editor-transform" class="editor-transform">
+              <label>Сдвиг X, мм<input id="editor-dx" type="number" step="any" value="0" required></label>
+              <label>Сдвиг Y, мм<input id="editor-dy" type="number" step="any" value="0" required></label>
+              <label>Поворот, °<input id="editor-angle" type="number" step="any" value="0" required></label>
+              <label>Масштаб, %<input id="editor-scale" type="number" min=".01" step="any" value="100" required></label>
+              <button class="secondary" type="submit">Применить к контуру</button>
+            </form>
+            <p id="editor-selection" role="status">Весь контур. Чтобы оставить угловые метки на месте, обведите рамкой только текст.</p>
             <details>
               <summary>Калибровка масштаба</summary>
               <p>Измерьте контрольный отрезок и укажите его нужную длину. Масштаб по XY изменится пропорционально.</p>
@@ -180,7 +203,7 @@
         </div>
       </div>
     </div>
-    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.6</span></footer>
+    <footer><span><i></i> <span id="footer-status">Локальный интерфейс</span></span><span>Контур CNC <b>·</b> v0.2.7</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="recovery-dialog" aria-labelledby="recovery-title">
